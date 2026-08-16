@@ -119,7 +119,7 @@ function ScheduleCard({ item, batchName, now: _now }: ScheduleCardProps) {
       backUrl: `/schedule`,
       ...(status === "live" ? { video_type: "live", topicId } : {}),
     });
-    window.location.href = `/watch?${params.toString()}`;
+    window.location.href = `https://pwthor.live/watch?${params.toString()}`;
   };
 
   const handleMaterialOpen = (e: React.MouseEvent) => {
