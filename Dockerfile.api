@@ -1,4 +1,6 @@
+# ─── Stage 1: Install & Build ────────────────────────────────────────────────
 FROM node:22 AS builder
+
 WORKDIR /app
 
 RUN corepack enable
@@ -8,17 +10,19 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY lib/ ./lib/
 COPY artifacts/api-server/ ./artifacts/api-server/
 
-# Allow required native dependency build scripts
-RUN pnpm config set only-built-dependencies esbuild,msedge-tts,onnxruntime-node,protobufjs,sharp
-
+# Install dependencies and allow native dependency build scripts
 RUN pnpm install --frozen-lockfile
 
+# Build API
 RUN pnpm --filter @workspace/api-server run build
 
+# Create production deployment
 RUN pnpm --filter @workspace/api-server deploy --prod /standalone
 
 
+# ─── Stage 2: Production Runner ─────────────────────────────────────────────
 FROM node:22-alpine AS runner
+
 WORKDIR /app
 
 COPY --from=builder /standalone/node_modules ./node_modules
