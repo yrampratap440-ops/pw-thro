@@ -1,0 +1,21 @@
+User-agent: *
+Allow: /
+
+# Block private/admin routes
+Disallow: /admin
+Disallow: /admin/
+Disallow: /api/
+
+# Block video player routes (dynamic, no SEO value)
+Disallow: /watch
+Disallow: /schedule-watch
+
+# Block duplicate content from query strings
+Disallow: /*?*fromMix=
+Disallow: /*?*_k=
+
+# Crawl-delay for polite bots
+Crawl-delay: 2
+
+# Sitemap
+Sitemap: https://pwx.pages.dev/sitemap.xml

@@ -1,0 +1,1005 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Link, useParams } from "wouter";
+import { AnimatePresence, motion } from "framer-motion";
+import renderMathInElement from "katex/contrib/auto-render";
+import "katex/dist/katex.min.css";
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Check,
+  CheckCircle2,
+  CircleHelp,
+  FileQuestion,
+  FlaskConical,
+  Loader2,
+  Lightbulb,
+  RotateCcw,
+  Sparkles,
+  Target,
+  Trophy,
+  Zap,
+} from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useBatchDetails } from "@/hooks/usePWApi";
+import { usePageMeta } from "@/hooks/usePageMeta";
+import {
+  useInfinitePracticeChapters,
+  useInfinitePracticeSubjects,
+  useInfinitePracticeSolution,
+  useStartInfinitePractice,
+  useSubmitInfinitePractice,
+  type InfinitePracticeChapter,
+  type InfinitePracticeQuestion,
+  type InfinitePracticeTestSolution,
+  type InfinitePracticeSubject,
+  type SubmitInfinitePracticeInput,
+} from "@/hooks/useInfinitePractice";
+
+type RoomState = "selection" | "question" | "complete";
+
+const QUESTION_COUNTS = [5, 10, 15, 20];
+const DIFFICULTIES = [
+  { value: 1, label: "Easy", detail: "Build confidence" },
+  { value: 2, label: "Medium", detail: "Stay exam-ready" },
+  { value: 3, label: "Hard", detail: "Stretch your ceiling" },
+];
+
+function stripUnsafeHtml(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<object[\s\S]*?<\/object>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, "");
+}
+
+function mathmlTextToTex(value: string) {
+  return value
+    .replace(/−/g, "-")
+    .replace(/×/g, "\\times ")
+    .replace(/⋅/g, "\\cdot ")
+    .replace(/≤/g, "\\le ")
+    .replace(/≥/g, "\\ge ")
+    .replace(/≠/g, "\\ne ")
+    .replace(/∞/g, "\\infty ")
+    .replace(/π/g, "\\pi ")
+    .replace(/θ/g, "\\theta ")
+    .replace(/α/g, "\\alpha ")
+    .replace(/β/g, "\\beta ")
+    .replace(/γ/g, "\\gamma ")
+    .replace(/Δ/g, "\\Delta ")
+    .replace(/∑/g, "\\sum ")
+    .replace(/∏/g, "\\prod ")
+    .replace(/∈/g, "\\in ")
+    .replace(/∉/g, "\\notin ")
+    .replace(/∴/g, "\\therefore ");
+}
+
+function mathmlNodeToTex(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return mathmlTextToTex(node.textContent || "");
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return "";
+
+  const element = node as Element;
+  const tag = element.localName.toLowerCase();
+  const children = Array.from(element.childNodes);
+  const meaningfulChildren = children.filter((child) => {
+    if (child.nodeType !== Node.ELEMENT_NODE) return child.textContent?.trim();
+    const childTag = (child as Element).localName.toLowerCase();
+    return childTag !== "none" && childTag !== "mprescripts";
+  });
+  const childTex = (index: number) => mathmlNodeToTex(meaningfulChildren[index]);
+  const allTex = meaningfulChildren.map((child) => mathmlNodeToTex(child)).join("");
+
+  switch (tag) {
+    case "math":
+    case "mrow":
+    case "mstyle":
+    case "semantics":
+    case "mphantom":
+    case "menclose":
+      return allTex;
+    case "annotation":
+    case "annotation-xml":
+      return "";
+    case "mi":
+    case "mn":
+    case "mtext":
+    case "mo":
+      return mathmlTextToTex(element.textContent || "");
+    case "mfrac":
+      return `\\frac{${childTex(0)}}{${childTex(1)}}`;
+    case "msup":
+      return `${childTex(0)}^{${childTex(1)}}`;
+    case "msub":
+      return `${childTex(0)}_{${childTex(1)}}`;
+    case "msubsup":
+      return `${childTex(0)}_{${childTex(1)}}^{${childTex(2)}}`;
+    case "msqrt":
+      return `\\sqrt{${allTex}}`;
+    case "mroot":
+      return `\\sqrt[${childTex(1)}]{${childTex(0)}}`;
+    case "mfenced": {
+      const open = element.getAttribute("open") ?? "(";
+      const close = element.getAttribute("close") ?? ")";
+      const separator = element.getAttribute("separators")?.[0] ?? ",";
+      const body = meaningfulChildren
+        .map((child) => mathmlNodeToTex(child))
+        .join(separator);
+      return `\\left${open}${body}\\right${close}`;
+    }
+    case "mover":
+      return `\\overset{${childTex(1)}}{${childTex(0)}}`;
+    case "munder":
+      return `\\underset{${childTex(1)}}{${childTex(0)}}`;
+    case "munderover":
+      return `\\underset{${childTex(1)}}{\\overset{${childTex(2)}}{${childTex(0)}}}`;
+    case "mspace":
+      return "\\ ";
+    case "mtable":
+      return `\\begin{matrix}${Array.from(element.children)
+        .map((row) => mathmlNodeToTex(row))
+        .join("\\\\") }\\end{matrix}`;
+    case "mtr":
+      return Array.from(element.children).map((cell) => mathmlNodeToTex(cell)).join(" & ");
+    case "mtd":
+      return allTex;
+    case "mmultiscripts": {
+      const base = mathmlNodeToTex(children[0]);
+      const postSub = children[1] && (children[1] as Element).localName?.toLowerCase() !== "none"
+        ? mathmlNodeToTex(children[1])
+        : "";
+      const postSup = children[2] && (children[2] as Element).localName?.toLowerCase() !== "none"
+        ? mathmlNodeToTex(children[2])
+        : "";
+      const prescriptMarker = children.findIndex(
+        (child) =>
+          child.nodeType === Node.ELEMENT_NODE &&
+          (child as Element).localName.toLowerCase() === "mprescripts",
+      );
+      const preSubNode = prescriptMarker === -1 ? undefined : children[prescriptMarker + 1];
+      const preSupNode = prescriptMarker === -1 ? undefined : children[prescriptMarker + 2];
+      const preSub = preSubNode && (preSubNode as Element).localName?.toLowerCase() !== "none"
+        ? mathmlNodeToTex(preSubNode)
+        : "";
+      const preSup = preSupNode && (preSupNode as Element).localName?.toLowerCase() !== "none"
+        ? mathmlNodeToTex(preSupNode)
+        : "";
+      return `${preSup ? `^{${preSup}}` : ""}${preSub ? `_{${preSub}}` : ""}${base}${postSub ? `_{${postSub}}` : ""}${postSup ? `^{${postSup}}` : ""}`;
+    }
+    default:
+      return allTex;
+  }
+}
+
+function normalizeEscapedLatexText(value: string) {
+  let normalized = value;
+  // Some records arrive JSON/string escaped twice, so KaTeX receives
+  // "\\(" and "\\frac" instead of the usable "\(" and "\frac".
+  // Only collapse pairs that introduce a LaTeX delimiter or command; keep
+  // ordinary LaTeX line breaks (`\\`) and unrelated backslashes untouched.
+  let previous = "";
+  while (normalized !== previous) {
+    previous = normalized;
+    normalized = normalized.replace(/\\\\(?=[A-Za-z()[\]$])/g, "\\");
+  }
+  return normalized;
+}
+
+function normalizeMathContent(html?: string) {
+  if (!html || typeof DOMParser === "undefined") return html || "";
+
+  const sanitized = stripUnsafeHtml(html);
+  const parsed = new DOMParser().parseFromString(`<div>${sanitized}</div>`, "text/html");
+  const container = parsed.body.firstElementChild;
+  if (!container) return sanitized;
+
+  container.querySelectorAll("math").forEach((math) => {
+    const tex = mathmlNodeToTex(math).replace(/\s+/g, " ").trim();
+    if (!tex) return;
+    const display = math.getAttribute("display") === "block";
+    const left = display ? "\\[" : "\\(";
+    const right = display ? "\\]" : "\\)";
+    math.replaceWith(parsed.createTextNode(`${left}${tex}${right}`));
+  });
+
+  const normalizeTextNodes = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      node.textContent = normalizeEscapedLatexText(node.textContent || "");
+      return;
+    }
+    Array.from(node.childNodes).forEach(normalizeTextNodes);
+  };
+  normalizeTextNodes(container);
+
+  return container.innerHTML;
+}
+
+function HtmlContent({
+  html,
+  className = "",
+  testId,
+}: {
+  html?: string;
+  className?: string;
+  testId?: string;
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const normalizedHtml = useMemo(() => normalizeMathContent(html), [html]);
+
+  useLayoutEffect(() => {
+    if (!contentRef.current) return;
+
+    // KaTeX replaces text nodes in-place. Keep React from reconciling the
+    // mutated HTML on unrelated parent updates (for example, option select).
+    contentRef.current.innerHTML = normalizedHtml;
+    renderMathInElement(contentRef.current, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "\\(", right: "\\)", display: false },
+        { left: "$", right: "$", display: false },
+      ],
+      throwOnError: false,
+      strict: false,
+      trust: false,
+    });
+  }, [normalizedHtml]);
+
+  if (!normalizedHtml) return null;
+  return (
+    <div
+      ref={contentRef}
+      className={`practice-html [&_img]:mx-auto [&_img]:max-w-full [&_img]:object-contain [&_p]:mb-2 [&_table]:max-w-full [&_table]:overflow-auto ${className}`}
+      data-testid={testId}
+    />
+  );
+}
+
+function subjectIcon(subject: InfinitePracticeSubject) {
+  const name = subject.englishName.toLowerCase();
+  if (name.includes("physics")) return <Zap className="h-5 w-5" />;
+  if (name.includes("chem")) return <FlaskConical className="h-5 w-5" />;
+  return <Target className="h-5 w-5" />;
+}
+
+function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      className="flex min-h-[360px] flex-col items-center justify-center rounded-3xl border border-rose-200 bg-white px-6 text-center"
+      data-testid="state-practice-error"
+    >
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
+        <CircleHelp className="h-6 w-6" />
+      </div>
+      <h2 className="text-lg font-bold text-slate-900">Could not load Infinite Practice</h2>
+      <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">{message}</p>
+      <button
+        data-testid="button-practice-retry"
+        onClick={onRetry}
+        className="mt-5 inline-flex h-10 items-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+      >
+        <RotateCcw className="h-4 w-4" /> Try again
+      </button>
+    </div>
+  );
+}
+
+function ChapterRow({
+  chapter,
+  selected,
+  onClick,
+}: {
+  chapter: InfinitePracticeChapter;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      data-testid={`button-chapter-${chapter.chapterId}`}
+      aria-pressed={selected}
+      onClick={onClick}
+      className={`flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all ${
+        selected
+          ? "border-indigo-500 bg-indigo-50 text-indigo-950"
+          : "border-slate-200 bg-white text-slate-700 hover:border-indigo-300"
+      }`}
+    >
+      <span
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+          selected ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 text-transparent"
+        }`}
+      >
+        <Check className="h-3 w-3" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold">{chapter.englishName}</span>
+        <span className="mt-0.5 block text-[11px] text-slate-500">
+          {Number(chapter.questionCount || 0).toLocaleString("en-IN")} questions
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function SelectionPanel({
+  batchId,
+  batchName,
+  onStarted,
+}: {
+  batchId: string;
+  batchName: string;
+  onStarted: (session: { testId: string; questions: InfinitePracticeQuestion[] }) => void;
+}) {
+  const subjectsQuery = useInfinitePracticeSubjects(batchId);
+  const startPractice = useStartInfinitePractice(batchId);
+  const subjects = subjectsQuery.data?.data.subjects ?? [];
+  const [subjectId, setSubjectId] = useState("");
+  const chaptersQuery = useInfinitePracticeChapters(subjectId, batchId);
+  const chapters = chaptersQuery.data?.data ?? [];
+  const [chapterIds, setChapterIds] = useState<string[]>([]);
+  const [questionCount, setQuestionCount] = useState(10);
+  const [difficulty, setDifficulty] = useState<number[]>([1, 2, 3]);
+
+  useEffect(() => {
+    setChapterIds([]);
+  }, [subjectId]);
+
+  const selectedChapters = useMemo(
+    () => chapters.filter((chapter) => chapterIds.includes(chapter.chapterId)),
+    [chapters, chapterIds],
+  );
+
+  const toggleDifficulty = (value: number) => {
+    setDifficulty((current) => {
+      if (current.includes(value)) {
+        return current.length === 1 ? current : current.filter((item) => item !== value);
+      }
+      return [...current, value].sort();
+    });
+  };
+
+  const toggleChapter = (chapterId: string) => {
+    setChapterIds((current) =>
+      current.includes(chapterId)
+        ? current.filter((item) => item !== chapterId)
+        : [...current, chapterId],
+    );
+  };
+
+  const start = () => {
+    const selectedSubject = subjects.find((subject) => subject.subjectId === subjectId);
+    if (!selectedSubject || selectedChapters.length === 0) return;
+    startPractice.mutate(
+      {
+        subjectId,
+        chapters: selectedChapters.map((chapter) => ({
+          chapterId: chapter.chapterId,
+          classId: chapter.classId,
+        })),
+        questionsCount: questionCount,
+        difficultyLevel: difficulty,
+        language: "English",
+      },
+      { onSuccess: onStarted },
+    );
+  };
+
+  const noFreeSessions =
+    startPractice.error instanceof Error &&
+    /no free sessions left/i.test(startPractice.error.message);
+
+  if (subjectsQuery.isLoading) {
+    return (
+      <div className="space-y-5" data-testid="state-practice-loading">
+        <Skeleton className="h-32 rounded-3xl" />
+        <Skeleton className="h-72 rounded-3xl" />
+        <Skeleton className="h-48 rounded-3xl" />
+      </div>
+    );
+  }
+
+  if (subjectsQuery.isError) {
+    return <ErrorState message={subjectsQuery.error.message} onRetry={() => subjectsQuery.refetch()} />;
+  }
+
+  if (subjects.length === 0) {
+    return (
+      <div
+        className="flex min-h-[360px] flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white px-6 text-center"
+        data-testid="state-practice-empty"
+      >
+        <BookOpen className="mb-4 h-10 w-10 text-slate-300" />
+        <h2 className="text-lg font-bold text-slate-900">No practice subjects are available</h2>
+        <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">
+          This practice catalog does not have published subjects for {batchName} yet.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-5"
+      data-testid="panel-practice-selection"
+    >
+      <section className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-7">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-indigo-600">
+              Step 01 / Choose subject
+            </p>
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900">What do you want to practise?</h2>
+            <p className="mt-2 text-sm text-slate-500">Choose a subject, then select one or more chapters.</p>
+          </div>
+          {subjectId && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Subject selected
+            </span>
+          )}
+        </div>
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          {subjects.map((subject) => (
+            <button
+              key={subject.subjectId}
+              data-testid={`button-subject-${subject.subjectId}`}
+              aria-pressed={subjectId === subject.subjectId}
+              onClick={() => setSubjectId(subject.subjectId)}
+              className={`flex min-h-[88px] items-center gap-3 rounded-2xl border p-4 text-left transition-all ${
+                subjectId === subject.subjectId
+                  ? "border-indigo-500 bg-indigo-50 text-indigo-950 shadow-sm"
+                  : "border-slate-200 bg-white text-slate-800 hover:-translate-y-0.5 hover:border-indigo-300"
+              }`}
+            >
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${subjectId === subject.subjectId ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"}`}>
+                {subject.icon ? (
+                  <img src={subject.icon} alt="" className="h-7 w-7 object-contain" />
+                ) : (
+                  subjectIcon(subject)
+                )}
+              </span>
+              <span className="min-w-0">
+                <span className="block font-bold">{subject.englishName}</span>
+                {subject.hindiName && <span className="mt-0.5 block text-xs text-slate-500">{subject.hindiName}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-5 lg:grid-cols-[1fr_290px]">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-7">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-indigo-600">
+                Step 02 / Pick chapters
+              </p>
+              <h2 className="text-xl font-bold text-slate-900">Practice exactly what you need</h2>
+            </div>
+            {chapters.length > 0 && (
+              <button
+                data-testid="button-select-all-chapters"
+                onClick={() => setChapterIds(chapterIds.length === chapters.length ? [] : chapters.map((chapter) => chapter.chapterId))}
+                className="text-xs font-bold text-indigo-600 hover:text-indigo-800"
+              >
+                {chapterIds.length === chapters.length ? "Clear all" : "Select all"}
+              </button>
+            )}
+          </div>
+          <div className="mt-5">
+            {!subjectId ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">
+                Select a subject to see its chapters.
+              </div>
+            ) : chaptersQuery.isLoading ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-16 rounded-xl" />)}
+              </div>
+            ) : chaptersQuery.isError ? (
+              <p className="rounded-2xl bg-rose-50 p-4 text-sm text-rose-700">{chaptersQuery.error.message}</p>
+            ) : chapters.length === 0 ? (
+              <p className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">No chapters are available for this subject.</p>
+            ) : (
+              <div className="grid max-h-[430px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                {chapters.map((chapter) => (
+                  <ChapterRow
+                    key={chapter.chapterId}
+                    chapter={chapter}
+                    selected={chapterIds.includes(chapter.chapterId)}
+                    onClick={() => toggleChapter(chapter.chapterId)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <aside className="flex flex-col rounded-3xl border border-indigo-100 bg-indigo-50/70 p-5 sm:p-6">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white">
+            <Sparkles className="h-5 w-5" />
+          </span>
+          <h3 className="mt-4 text-lg font-bold text-indigo-950">Build your own question set</h3>
+          <p className="mt-2 text-sm leading-6 text-indigo-900/70">
+            Select the chapters you want, choose a difficulty mix, and start practising without opening a full mock test.
+          </p>
+          <div className="mt-6 space-y-5 border-t border-indigo-200/70 pt-5">
+            <fieldset>
+              <legend className="mb-3 text-sm font-bold text-indigo-950">Difficulty</legend>
+              <div className="flex flex-wrap gap-2">
+                {DIFFICULTIES.map((item) => (
+                  <button
+                    key={item.value}
+                    data-testid={`button-difficulty-${item.value}`}
+                    aria-pressed={difficulty.includes(item.value)}
+                    title={item.detail}
+                    onClick={() => toggleDifficulty(item.value)}
+                    className={`rounded-xl border px-3 py-2 text-xs font-bold ${
+                      difficulty.includes(item.value)
+                        ? "border-indigo-600 bg-indigo-600 text-white"
+                        : "border-indigo-200 bg-white text-indigo-700"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend className="mb-3 text-sm font-bold text-indigo-950">Questions</legend>
+              <div className="flex flex-wrap gap-2">
+                {QUESTION_COUNTS.map((count) => (
+                  <button
+                    key={count}
+                    data-testid={`button-question-count-${count}`}
+                    aria-pressed={questionCount === count}
+                    onClick={() => setQuestionCount(count)}
+                    className={`h-9 min-w-10 rounded-xl border px-2 text-xs font-bold ${
+                      questionCount === count
+                        ? "border-indigo-600 bg-indigo-600 text-white"
+                        : "border-indigo-200 bg-white text-indigo-700"
+                    }`}
+                  >
+                    {count}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <button
+              data-testid="button-start-practice"
+               disabled={!subjectId || chapterIds.length === 0 || startPractice.isPending || noFreeSessions}
+              onClick={start}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {startPractice.isPending ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Building your set</>
+              ) : (
+                <>{noFreeSessions ? "Sessions unavailable" : "Start practising"} <ArrowRight className="h-4 w-4" /></>
+              )}
+            </button>
+            {startPractice.isError && (
+              <p
+                className={`text-xs font-medium leading-5 ${
+                  noFreeSessions ? "text-amber-800" : "text-rose-700"
+                }`}
+                data-testid="status-practice-start-error"
+              >
+                {noFreeSessions
+                  ? `Is batch (${batchName}) ke free Infinite Practice sessions ab available nahi hain. Kisi doosre supported batch ya baad mein dobara try karein.`
+                  : startPractice.error.message}
+              </p>
+            )}
+          </div>
+        </aside>
+      </section>
+    </motion.div>
+  );
+}
+
+function QuestionRoom({
+  batchId,
+  session,
+  onComplete,
+}: {
+  batchId: string;
+  session: { testId: string; questions: InfinitePracticeQuestion[] };
+  onComplete: (result: InfinitePracticeTestSolution) => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [answers, setAnswers] = useState<Record<string, SubmitInfinitePracticeInput>>({});
+  const [submitError, setSubmitError] = useState("");
+  const submitTest = useSubmitInfinitePractice(session.testId);
+  const loadSolution = useInfinitePracticeSolution(session.testId);
+  const startedAt = useRef(Date.now());
+  const question = session.questions[index];
+  const progress = (index / session.questions.length) * 100;
+
+  useEffect(() => {
+    startedAt.current = Date.now();
+    setSelected(answers[session.questions[index]?.questionId]?.markedSolutions ?? []);
+    setSubmitError("");
+  }, [answers, index, session.questions]);
+
+  const makeAnswer = (
+    status: SubmitInfinitePracticeInput["status"] = "ATTEMPTED",
+  ): SubmitInfinitePracticeInput | null => {
+    if (!question) return null;
+    if (status === "ATTEMPTED" && selected.length === 0) return null;
+    return {
+      questionId: question.questionId,
+      status,
+      timeTaken: Math.max(1000, Date.now() - startedAt.current),
+      chapterId: question.chapterId,
+      questionNumber: index + 1,
+      markedSolutions: status === "SKIPPED" ? [] : selected,
+      difficulty: question.difficulty,
+      type: question.type,
+    };
+  };
+
+  const completeAnswers = (currentAnswers: Record<string, SubmitInfinitePracticeInput>) =>
+    session.questions.map((item, itemIndex) => (
+      currentAnswers[item.questionId] ?? {
+        questionId: item.questionId,
+        status: "SKIPPED" as const,
+        timeTaken: 0,
+        chapterId: item.chapterId,
+        questionNumber: itemIndex + 1,
+        markedSolutions: [],
+        difficulty: item.difficulty,
+        type: item.type,
+      }
+    ));
+
+  const submitCurrentTest = async (currentAnswers: Record<string, SubmitInfinitePracticeInput>) => {
+    if (submitTest.isPending || loadSolution.isPending) return;
+    setSubmitError("");
+    try {
+      await submitTest.mutateAsync({ questionsResponse: completeAnswers(currentAnswers) });
+      const result = await loadSolution.mutateAsync();
+      onComplete(result);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Could not submit this test.");
+    }
+  };
+
+  const next = async () => {
+    const answer = makeAnswer();
+    if (!answer) return;
+    const nextAnswers = { ...answers, [answer.questionId]: answer };
+    setAnswers(nextAnswers);
+    if (index < session.questions.length - 1) {
+      setIndex((value) => value + 1);
+      return;
+    }
+    await submitCurrentTest(nextAnswers);
+  };
+
+  const previous = () => {
+    if (index === 0 || submitTest.isPending || loadSolution.isPending) return;
+    const answer = makeAnswer();
+    if (answer) setAnswers((current) => ({ ...current, [answer.questionId]: answer }));
+    setIndex((value) => value - 1);
+  };
+
+  const skip = async () => {
+    const answer = makeAnswer("SKIPPED");
+    if (!answer) return;
+    const nextAnswers = { ...answers, [answer.questionId]: answer };
+    setAnswers(nextAnswers);
+    if (index < session.questions.length - 1) {
+      setIndex((value) => value + 1);
+      return;
+    }
+    await submitCurrentTest(nextAnswers);
+  };
+
+  const submit = async () => {
+    const answer = makeAnswer(selected.length > 0 ? "ATTEMPTED" : "SKIPPED");
+    const nextAnswers = answer
+      ? { ...answers, [answer.questionId]: answer }
+      : answers;
+    setAnswers(nextAnswers);
+    await submitCurrentTest(nextAnswers);
+  };
+
+  if (!question) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="mx-auto max-w-4xl"
+      data-testid="panel-practice-question"
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link
+            data-testid="link-leave-practice"
+            href="/batch/infinite-practice"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+          <div className="min-w-0">
+            <p className="truncate text-xs font-bold uppercase tracking-[0.14em] text-indigo-600">Infinite Practice</p>
+            <p className="text-sm font-semibold text-slate-700">
+              Question {index + 1} <span className="font-normal text-slate-400">of {session.questions.length}</span>
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="hidden items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-slate-600 sm:inline-flex">
+            <Target className="h-3.5 w-3.5 text-indigo-600" /> {question.subjectName || "JEE 2026"}
+          </span>
+          <button
+            data-testid="button-submit-test"
+            disabled={submitTest.isPending || loadSolution.isPending}
+            onClick={submit}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {submitTest.isPending || loadSolution.isPending
+              ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Submitting...</>
+              : "Submit test"}
+          </button>
+        </div>
+      </div>
+      <div className="mb-5 h-1.5 overflow-hidden rounded-full bg-slate-200">
+        <motion.div animate={{ width: `${progress}%` }} className="h-full rounded-full bg-indigo-600" />
+      </div>
+
+      <AnimatePresence mode="wait">
+        <motion.article
+          key={question.questionId}
+          initial={{ opacity: 0, x: 10 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -10 }}
+          className="practice-question-canvas rounded-3xl border border-slate-200 p-5 shadow-sm sm:p-8"
+        >
+          <div className="mb-6 flex items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <span className="truncate text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+              {question.chapterName || "Practice question"}
+            </span>
+            <span className="shrink-0 text-xs text-slate-400">{question.typeTitle || "Question"}</span>
+          </div>
+
+          <HtmlContent
+            html={question.content || question.plainQuestionText}
+            className="mb-7 text-[17px] leading-8 text-slate-900 [&_img]:my-4 [&_img]:max-h-[420px]"
+            testId="text-practice-question"
+          />
+
+          <div className="space-y-3" role="radiogroup" aria-label={`Answers for question ${index + 1}`}>
+            {question.options.map((option, optionIndex) => {
+              const isSelected = selected.includes(optionIndex + 1);
+              return (
+                <button
+                  key={`${question.questionId}-${optionIndex}`}
+                  data-testid={`button-option-${optionIndex + 1}`}
+                  role="radio"
+                  aria-checked={isSelected}
+                  disabled={submitTest.isPending || loadSolution.isPending}
+                  onClick={() =>
+                    setSelected((current) =>
+                      question.type === 2
+                        ? current.includes(optionIndex + 1)
+                          ? current.filter((value) => value !== optionIndex + 1)
+                          : [...current, optionIndex + 1]
+                        : [optionIndex + 1],
+                    )
+                  }
+                  className={`flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-all disabled:cursor-default ${
+                    isSelected
+                      ? "border-indigo-500 bg-indigo-50"
+                      : "border-slate-200 bg-white hover:border-indigo-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${isSelected ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                    {String.fromCharCode(65 + optionIndex)}
+                  </span>
+                  <HtmlContent html={option.text} className="min-w-0 flex-1 pt-0.5 text-sm leading-6 text-slate-800 [&_p]:mb-0" />
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-7 flex flex-col gap-4 border-t border-slate-100 pt-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-slate-400">
+                {question.type === 2 ? "Select one or more options" : "Select an option"}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  data-testid="button-previous-question"
+                  disabled={index === 0 || submitTest.isPending || loadSolution.isPending}
+                  onClick={previous}
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Previous
+                </button>
+                <button
+                  data-testid="button-skip-question"
+                  disabled={submitTest.isPending || loadSolution.isPending}
+                  onClick={skip}
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 text-xs font-bold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Skip question
+                </button>
+                <button
+                  data-testid={index === session.questions.length - 1 ? "button-submit-test-final" : "button-next-question"}
+                  disabled={selected.length === 0 || submitTest.isPending || loadSolution.isPending}
+                  onClick={next}
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+                >
+                  {submitTest.isPending || loadSolution.isPending
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Submitting...</>
+                    : <>{index === session.questions.length - 1 ? "Submit & finish" : "Next question"} <ArrowRight className="h-3.5 w-3.5" /></>}
+                </button>
+              </div>
+            </div>
+            {submitError && (
+              <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700" data-testid="status-practice-submit-error">
+                {submitError}
+              </div>
+            )}
+          </div>
+        </motion.article>
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function Completion({
+  result,
+  onRestart,
+}: {
+  result: InfinitePracticeTestSolution;
+  onRestart: () => void;
+}) {
+  const questionSolutions = result.questionsResponses ?? [];
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="mx-auto max-w-xl rounded-3xl border border-slate-200 bg-white p-7 text-center sm:p-10"
+      data-testid="state-practice-complete"
+    >
+      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+        <Trophy className="h-8 w-8" />
+      </div>
+      <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-indigo-600">Test submitted</p>
+      <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">Practice set finished</h2>
+      <div className="mt-5 grid grid-cols-2 gap-3 text-left sm:grid-cols-4">
+        {[
+          ["Score", result.userScore ?? result.score ?? "—"],
+          ["Accuracy", result.accuracy === undefined ? "—" : `${result.accuracy}%`],
+          ["Correct", result.totalCorrectQuestions ?? "—"],
+          ["Incorrect", result.totalIncorrectQuestions ?? "—"],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-2xl bg-indigo-50 p-3">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-500">{label}</p>
+            <p className="mt-1 text-xl font-bold text-indigo-950">{value}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-5 text-sm leading-6 text-slate-500">Review the solutions below and keep practising.</p>
+      {questionSolutions.length > 0 && (
+        <div className="mt-6 space-y-3 text-left">
+          {questionSolutions.map((item, itemIndex) => {
+            const correctOptions = (item.options ?? [])
+              .map((option, optionIndex) => option.isCorrect ? optionIndex + 1 : null)
+              .filter((value): value is number => value !== null);
+            const solution = item.solutions?.[0];
+            return (
+              <article key={`${item.questionId}-${itemIndex}`} className="rounded-2xl border border-slate-200 p-4">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Question {item.questionNumber ?? itemIndex + 1}</p>
+                <HtmlContent html={item.content} className="mt-2 text-sm leading-6 text-slate-800" />
+                <p className="mt-3 text-xs font-semibold text-emerald-700">
+                  Correct option{correctOptions.length === 1 ? "" : "s"}: {correctOptions.length ? correctOptions.join(", ") : "Not available"}
+                </p>
+                {solution?.text && <HtmlContent html={solution.text} className="mt-2 text-sm leading-6 text-slate-600" />}
+                {solution?.videoSolution?.url && (
+                  <a href={solution.videoSolution.url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-semibold text-indigo-600 hover:underline">
+                    Watch video solution
+                  </a>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+      <p className="mt-3 text-sm leading-6 text-slate-500">Keep the momentum going with another focused set.</p>
+      <button
+        data-testid="button-practice-again"
+        onClick={onRestart}
+        className="mt-7 inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-bold text-white hover:bg-indigo-700"
+      >
+        <RotateCcw className="h-4 w-4" /> Practise another set
+      </button>
+    </motion.div>
+  );
+}
+
+export default function InfinitePractice() {
+  const { batchId = "" } = useParams<{ batchId: string }>();
+  const { data: batchData } = useBatchDetails(batchId);
+  const [roomState, setRoomState] = useState<RoomState>("selection");
+  const [session, setSession] = useState<{ testId: string; questions: InfinitePracticeQuestion[] } | null>(null);
+  const [testResult, setTestResult] = useState<InfinitePracticeTestSolution | null>(null);
+  const batchName = batchData?.data?.name || "Infinite Practice";
+
+  usePageMeta({
+    title: `Infinite Practice | ${batchName}`,
+    description: `Choose a subject and chapter to practise JEE questions from the ${batchName} batch.`,
+    canonical: `/batch/${batchId}/infinite-practice`,
+  });
+
+  const startQuestionRoom = (nextSession: { testId: string; questions: InfinitePracticeQuestion[] }) => {
+    setSession(nextSession);
+    setTestResult(null);
+    setRoomState("question");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  return (
+    <div className="min-h-screen w-full bg-white text-slate-900" data-testid="page-infinite-practice">
+      <main className="mx-auto min-h-screen max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        {roomState === "selection" && (
+          <div className="mx-auto max-w-6xl">
+            <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700">
+                  <FileQuestion className="h-3.5 w-3.5" /> Your practice room
+                </div>
+                <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
+                  Infinite Practice<span className="text-indigo-600">.</span>
+                </h1>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 sm:text-base">
+                  Pick a subject, chapter, difficulty, and question count. Practise at your own pace.
+                </p>
+              </div>
+              <Link
+                data-testid="link-practice-back"
+                href="/batch/infinite-practice"
+                className="inline-flex h-10 items-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 sm:self-auto"
+              >
+                <ArrowLeft className="h-4 w-4" /> Batch overview
+              </Link>
+            </div>
+            <SelectionPanel batchId={batchId} batchName={batchName} onStarted={startQuestionRoom} />
+          </div>
+        )}
+        {roomState === "question" && session && (
+          <QuestionRoom
+            batchId={batchId}
+            session={session}
+            onComplete={(result) => {
+              setTestResult(result);
+              setRoomState("complete");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          />
+        )}
+        {roomState === "complete" && testResult && (
+          <Completion
+            result={testResult}
+            onRestart={() => {
+              setSession(null);
+              setTestResult(null);
+              setRoomState("selection");
+            }}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
