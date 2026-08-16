@@ -98,8 +98,14 @@ async function resolveViaAkp(batchId: string, childId: string): Promise<Resolved
 // Fallback source: fetch straight from pwsecure (same method DrmPlayer uses).
 // No signed CDN query string here — the manifest is loaded through our own
 // /api/proxy route, which attaches the right Referer/Origin headers.
+// Fallback source: fetch straight from pwsecure — but routed through our own
+// backend proxy (/pw-video, /pw-otp), not called directly from the browser.
+// pwsecure's worker checks the Referer/Origin header and 403s any request
+// that isn't sent with pw.live's headers, which a direct browser fetch can
+// never match (the browser sends this site's own Referer). Our backend proxy
+// sets the right headers server-side, same as it already does for AKP.
 async function resolveViaPwSecure(childId: string): Promise<ResolvedSource> {
-  const videoRes = await fetch(`${PW_API_BASE}/videos/${encodeURIComponent(childId)}`);
+  const videoRes = await fetch(`${PROXY_BASE}/pw-video/${encodeURIComponent(childId)}`);
   if (!videoRes.ok) throw new Error(`Video details failed (${videoRes.status})`);
   const videoData = await videoRes.json();
   const mpdUrl: string | undefined = videoData?.data?.videoUrl;
@@ -111,7 +117,7 @@ async function resolveViaPwSecure(childId: string): Promise<ResolvedSource> {
   const kid = extractKidFromMpd(mpdText);
   if (!kid) throw new Error("No KID found in MPD");
 
-  const otpRes = await fetch(`${PW_API_BASE}/videos/get-otp?key=${encodeURIComponent(kid)}&isEncoded=true`);
+  const otpRes = await fetch(`${PROXY_BASE}/pw-otp?key=${encodeURIComponent(kid)}`);
   if (!otpRes.ok) throw new Error(`OTP fetch failed (${otpRes.status})`);
   const otpData = await otpRes.json();
   const keyHex: string | undefined = otpData?.data?.otp ?? otpData?.data?.key ?? otpData?.key;
@@ -382,14 +388,33 @@ export function AkpPlayer({ batchId, subjectId = "", scheduleId, childId, poster
       setQualities([]);
       setActiveQuality("auto");
 
+      let resolved;
       try {
         // Step 1: Resolve manifest URL + DRM keys. Tries learnbyakp first
         // (which has its own server-side retries); if that's genuinely down,
         // falls back to fetching straight from pwsecure so the video still
         // plays instead of showing an error.
+        //
+        // This is deliberately its OWN try/catch, separate from the player
+        // setup below: a setup/info-fetch failure is not a transient mid-
+        // playback network blip, so it must not enter the silent
+        // reconnect-loop (scheduleRecovery) meant for shaka player errors —
+        // that loop was making a real failure take 15+ seconds and multiple
+        // silent retries before finally showing anything to the user.
         setStatusMsg("Fetching video info…");
-        const { mpdUrl, loadViaProxy, signedQs, baseUrl, shakaKeys, topic } =
-          await resolveVideoSource(batchId, childId);
+        resolved = await resolveVideoSource(batchId, childId);
+      } catch (err: unknown) {
+        if (!cancelled) {
+          const e = err as any;
+          const message = e instanceof Error ? e.message : e?.message ? String(e.message) : "Unknown error";
+          setStatus("error");
+          setError(message);
+        }
+        return;
+      }
+
+      try {
+        const { mpdUrl, loadViaProxy, signedQs, baseUrl, shakaKeys, topic } = resolved;
         if (topic) setVideoTitle(topic);
 
         if (cancelled) return;
