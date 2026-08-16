@@ -17,6 +17,7 @@ COPY artifacts/pw-clone/ ./artifacts/pw-clone/
 RUN pnpm install --frozen-lockfile
 
 # Build the frontend (Vite bundles React app → dist/public)
+ENV VITE_API_URL=/api
 RUN pnpm --filter @workspace/pw-clone run build
 
 # Build the API (esbuild bundles src → dist/index.mjs)
@@ -43,4 +44,4 @@ ENV NODE_ENV=production
 
 EXPOSE 8080
 
-CMD ["node", "--enable-source-maps", "./artifacts/api-server/dist/index.mjs"]
+CMD ["node", "--enable-source-maps", "./artifacts/api-servFer/dist/index.mjs"]
