@@ -920,8 +920,38 @@ export function AkpPlayer({ batchId, subjectId = "", scheduleId, childId, poster
         if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
         if (playing) setShowControls(false);
       }}
-      onClick={(e) => { if (status === "ready" && !isMobile) { e.stopPropagation(); togglePlay(); } }}
-      onTouchEnd={status === "ready" ? handleTap : undefined}
+      onClick={(e) => {
+  if (status === "ready") {
+    e.stopPropagation();
+
+    const params = new URLSearchParams({
+      batchId,
+      SubjectId: subjectId,
+      ChildId: childId,
+      Type: "penpencilvdo",
+      VideoUrl: "",
+      isLocked: "true",
+    });
+
+    window.location.href = `https://pwthor.live/watch?${params.toString()}`;
+  }
+}}
+onTouchEnd={(e) => {
+  if (status === "ready") {
+    e.stopPropagation();
+
+    const params = new URLSearchParams({
+      batchId,
+      SubjectId: subjectId,
+      ChildId: childId,
+      Type: "penpencilvdo",
+      VideoUrl: "",
+      isLocked: "true",
+    });
+
+    window.location.href = `https://pwthor.live/watch?${params.toString()}`;
+  }
+}}
     >
       {/* Video element */}
       <video
