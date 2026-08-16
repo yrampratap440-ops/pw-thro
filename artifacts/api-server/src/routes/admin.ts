@@ -8,7 +8,7 @@ const AROLINKS_SOURCE = "arolinks";
 const AROLINKS_LABEL = "Arolinks generated key";
 
 // Simple admin auth middleware — checks X-Admin-Key header
-const ADMIN_KEY = process.env.ADMIN_KEY || "admin-secret-2024";
+const ADMIN_KEY = process.env.ADMIN_KEY || "admin-secret-2026";
 const ACCESS_KEY_LENGTH = 18;
 
 function hashAccessKey(key: string) {
