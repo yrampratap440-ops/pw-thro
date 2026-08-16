@@ -433,6 +433,40 @@ proxyRouter.get("/pw-otp", async (req, res) => {
   }
 });
 
+// ── api-alpha1 video-info proxy (third video source, community-run) ───────────
+// https://api-alpha1.vercel.app — takes video_id/subject_id/batch_id and
+// resolves the DRM-decrypted stream URL + clear keys directly, no separate
+// OTP/KID round-trip needed. Kept as a further fallback alongside pwsecure
+// and learnbyakp so a single source being down doesn't take the whole
+// player down with it.
+proxyRouter.get("/alpha-video-info", async (req, res) => {
+  const { batchId, subjectId, videoId } = req.query as Record<string, string>;
+  if (!batchId || !subjectId || !videoId) {
+    res.status(400).json({ error: "Missing batchId, subjectId or videoId" });
+    return;
+  }
+
+  try {
+    const upstream = await fetch("https://api-alpha1.vercel.app/getkeys-from-video-info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        video_id: videoId,
+        subject_id: subjectId,
+        batch_id: batchId,
+      }),
+    });
+
+    const data = await upstream.json();
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.status(upstream.status).json(data);
+  } catch (err) {
+    req.log.error({ err }, "alpha-video-info proxy fetch failed");
+    res.status(502).json({ error: "Upstream fetch failed" });
+  }
+});
+
 proxyRouter.options(["/proxy", "/pdf", "/dash-seg/*path"], (_req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
