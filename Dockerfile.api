@@ -1,35 +1,46 @@
-# ─── Stage 1: Install & Build ────────────────────────────────────────────────
-FROM node:22 AS builder
-
+# ─── Stage 1: Install & Build ─────────────────────────────────────────────────
+FROM node:20 AS builder
 WORKDIR /app
 
+# Enable pnpm via corepack
 RUN corepack enable
 
+# Copy workspace config first (better layer caching)
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 
+# Copy all workspace packages needed by api-server + frontend
 COPY lib/ ./lib/
 COPY artifacts/api-server/ ./artifacts/api-server/
+COPY artifacts/pw-clone/ ./artifacts/pw-clone/
 
-# Install dependencies and allow native dependency build scripts
+# Install all dependencies (including devDeps needed for build)
 RUN pnpm install --frozen-lockfile
 
-# Build API
+# Build the frontend (Vite bundles React app → dist/public)
+RUN pnpm --filter @workspace/pw-clone run build
+
+# Build the API (esbuild bundles src → dist/index.mjs)
 RUN pnpm --filter @workspace/api-server run build
 
-# Create production deployment
+# Create a standalone production deploy with flat node_modules
+# (pnpm deploy resolves all prod deps without devDeps)
 RUN pnpm --filter @workspace/api-server deploy --prod --legacy /standalone
 
 
-# ─── Stage 2: Production Runner ─────────────────────────────────────────────
-FROM node:22-alpine AS runner
-
+# ─── Stage 2: Production Runner ───────────────────────────────────────────────
+FROM node:20-alpine AS runner
 WORKDIR /app
 
+# Copy flat production node_modules from pnpm deploy
 COPY --from=builder /standalone/node_modules ./node_modules
-COPY --from=builder /app/artifacts/api-server/dist ./dist
+
+# Preserve original folder depth (artifacts/api-server, artifacts/pw-clone)
+# so app.ts's relative path "../../pw-clone/dist/public" resolves correctly
+COPY --from=builder /app/artifacts/api-server/dist ./artifacts/api-server/dist
+COPY --from=builder /app/artifacts/pw-clone/dist ./artifacts/pw-clone/dist
 
 ENV NODE_ENV=production
 
 EXPOSE 8080
 
-CMD ["node", "--enable-source-maps", "./dist/index.mjs"]
+CMD ["node", "--enable-source-maps", "./artifacts/api-server/dist/index.mjs"]
