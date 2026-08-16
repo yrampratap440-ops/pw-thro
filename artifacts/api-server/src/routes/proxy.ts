@@ -400,6 +400,39 @@ proxyRouter.get("/pw-video/:videoId", async (req, res) => {
   }
 });
 
+// ── PW ClearKey OTP proxy (fetches from pwsecure with proper headers) ──────────
+// Used by the pwsecure fallback path in AkpPlayer/DrmPlayer to exchange a KID
+// for its decryption key. Calling pwsecure directly from the browser gets a
+// 403 because the worker checks Referer/Origin — same reason /pw-video exists.
+proxyRouter.get("/pw-otp", async (req, res) => {
+  const { key } = req.query as Record<string, string>;
+  if (!key) {
+    res.status(400).json({ error: "Missing key" });
+    return;
+  }
+
+  const PW_SECURE = "https://pwsecure.gourav23032009.workers.dev/api/pw";
+  const url = `${PW_SECURE}/v1/videos/get-otp?key=${encodeURIComponent(key)}&isEncoded=true`;
+
+  try {
+    const upstream = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://www.pw.live/",
+        "Origin": "https://www.pw.live",
+        "Accept": "application/json, text/plain, */*",
+      },
+    });
+
+    const data = await upstream.json();
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.status(upstream.status).json(data);
+  } catch (err) {
+    req.log.error({ err }, "pw-otp proxy fetch failed");
+    res.status(502).json({ error: "Upstream fetch failed" });
+  }
+});
+
 proxyRouter.options(["/proxy", "/pdf", "/dash-seg/*path"], (_req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
