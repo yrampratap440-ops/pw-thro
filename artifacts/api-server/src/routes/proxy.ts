@@ -138,6 +138,8 @@ proxyRouter.options("/akp-video-url", (_req, res) => {
   res.status(204).end();
 });
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 proxyRouter.get("/akp-video-url", async (req, res) => {
   const { batchId, childId } = req.query as Record<string, string>;
   if (!batchId || !childId) {
@@ -147,24 +149,52 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
 
   const upstream = `https://learnbyakp.onrender.com/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
 
-  try {
-    const resp = await fetch(upstream, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, */*",
-        "Referer": "https://learnbyakp.online/",
-        "Origin": "https://learnbyakp.online",
-      },
-    });
+  // learnbyakp.onrender.com is a free-tier Render service — it can be asleep
+  // (cold start) or briefly flaky, which surfaces as a 5xx. Retry a few times
+  // with a short backoff before giving up. 4xx (bad request / not found) is
+  // not retried since that means the data itself is wrong, not transient.
+  const MAX_ATTEMPTS = 3;
+  const RETRY_DELAYS_MS = [1000, 2500]; // delay before attempt 2 and attempt 3
 
-    const data = await resp.json();
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cache-Control", "public, max-age=300");
-    res.status(resp.status).json(data);
-  } catch (err) {
-    req.log.error({ err }, "akp-video-url proxy fetch failed");
-    res.status(502).json({ error: "Upstream fetch failed" });
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const resp = await fetch(upstream, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept": "application/json, */*",
+          "Referer": "https://learnbyakp.online/",
+          "Origin": "https://learnbyakp.online",
+        },
+      });
+
+      // Success or a non-5xx response (e.g. 400/404) — return immediately,
+      // retrying won't help.
+      if (resp.status < 500) {
+        const data = await resp.json();
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "public, max-age=300");
+        res.status(resp.status).json(data);
+        return;
+      }
+
+      req.log.warn(
+        { attempt, status: resp.status, batchId, childId },
+        "akp-video-url upstream returned 5xx, will retry"
+      );
+      lastErr = new Error(`Upstream status ${resp.status}`);
+    } catch (err) {
+      req.log.warn({ attempt, err, batchId, childId }, "akp-video-url fetch threw, will retry");
+      lastErr = err;
+    }
+
+    if (attempt < MAX_ATTEMPTS) {
+      await sleep(RETRY_DELAYS_MS[attempt - 1]);
+    }
   }
+
+  req.log.error({ err: lastErr, batchId, childId }, "akp-video-url proxy failed after retries");
+  res.status(502).json({ error: "Upstream fetch failed after retries" });
 });
 
 // ── PW lecture slides + attachments ─────────────────────────────────────────
