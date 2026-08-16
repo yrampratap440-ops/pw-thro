@@ -17,7 +17,7 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @workspace/api-server run build
 
 # Create production deployment
-RUN pnpm --filter @workspace/api-server deploy --prod /standalone
+RUN pnpm --filter @workspace/api-server deploy --prod --legacy /standalone
 
 
 # ─── Stage 2: Production Runner ─────────────────────────────────────────────
