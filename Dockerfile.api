@@ -6,7 +6,7 @@ WORKDIR /app
 RUN corepack enable
 
 # Copy workspace config first (better layer caching)
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 
 # Copy all workspace packages needed by api-server + frontend
 COPY lib/ ./lib/
