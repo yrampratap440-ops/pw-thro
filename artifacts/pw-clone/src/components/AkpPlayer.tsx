@@ -920,38 +920,14 @@ export function AkpPlayer({ batchId, subjectId = "", scheduleId, childId, poster
         if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
         if (playing) setShowControls(false);
       }}
+      // Do not redirect the player to an external watch page.
+      // Playback and controls are handled inside this component.
       onClick={(e) => {
-  if (status === "ready") {
-    e.stopPropagation();
-
-    const params = new URLSearchParams({
-      batchId,
-      SubjectId: subjectId,
-      ChildId: childId,
-      Type: "penpencilvdo",
-      VideoUrl: "",
-      isLocked: "true",
-    });
-
-    window.location.href = `https://pwthor.live/watch?${params.toString()}`;
-  }
-}}
-onTouchEnd={(e) => {
-  if (status === "ready") {
-    e.stopPropagation();
-
-    const params = new URLSearchParams({
-      batchId,
-      SubjectId: subjectId,
-      ChildId: childId,
-      Type: "penpencilvdo",
-      VideoUrl: "",
-      isLocked: "true",
-    });
-
-    window.location.href = `https://pwthor.live/watch?${params.toString()}`;
-  }
-}}
+        e.stopPropagation();
+      }}
+      onTouchEnd={(e) => {
+        e.stopPropagation();
+      }}
     >
       {/* Video element */}
       <video
