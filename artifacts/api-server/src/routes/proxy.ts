@@ -138,8 +138,6 @@ proxyRouter.options("/akp-video-url", (_req, res) => {
   res.status(204).end();
 });
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 proxyRouter.get("/akp-video-url", async (req, res) => {
   const { batchId, childId } = req.query as Record<string, string>;
   if (!batchId || !childId) {
@@ -149,65 +147,24 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
 
   const upstream = `https://learnbyakp.onrender.com/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
 
-  // learnbyakp.onrender.com is a free-tier Render service — it can be asleep
-  // (cold start) or briefly flaky, which surfaces as a 5xx or a long hang.
-  // Retry a few times with a short backoff, but cap each attempt with its
-  // own timeout so a hanging upstream can't block the whole request for
-  // minutes. 4xx (bad request / not found) is not retried since that means
-  // the data itself is wrong, not transient.
-  const MAX_ATTEMPTS = 3;
-  const ATTEMPT_TIMEOUT_MS = 8000; // give up on a single attempt after 8s
-  const RETRY_DELAYS_MS = [500, 1000]; // delay before attempt 2 and attempt 3
+  try {
+    const resp = await fetch(upstream, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, */*",
+        "Referer": "https://learnbyakp.online/",
+        "Origin": "https://learnbyakp.online",
+      },
+    });
 
-  let lastErr: unknown = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), ATTEMPT_TIMEOUT_MS);
-
-    try {
-      const resp = await fetch(upstream, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          "Accept": "application/json, */*",
-          "Referer": "https://learnbyakp.online/",
-          "Origin": "https://learnbyakp.online",
-        },
-      });
-
-      // Success or a non-5xx response (e.g. 400/404) — return immediately,
-      // retrying won't help.
-      if (resp.status < 500) {
-        const data = await resp.json();
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Cache-Control", "public, max-age=300");
-        res.status(resp.status).json(data);
-        return;
-      }
-
-      req.log.warn(
-        { attempt, status: resp.status, batchId, childId },
-        "akp-video-url upstream returned 5xx, will retry"
-      );
-      lastErr = new Error(`Upstream status ${resp.status}`);
-    } catch (err) {
-      const timedOut = err instanceof Error && err.name === "AbortError";
-      req.log.warn(
-        { attempt, err, batchId, childId, timedOut },
-        timedOut ? "akp-video-url attempt timed out, will retry" : "akp-video-url fetch threw, will retry"
-      );
-      lastErr = timedOut ? new Error(`Upstream timed out after ${ATTEMPT_TIMEOUT_MS}ms`) : err;
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (attempt < MAX_ATTEMPTS) {
-      await sleep(RETRY_DELAYS_MS[attempt - 1]);
-    }
+    const data = await resp.json();
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.status(resp.status).json(data);
+  } catch (err) {
+    req.log.error({ err }, "akp-video-url proxy fetch failed");
+    res.status(502).json({ error: "Upstream fetch failed" });
   }
-
-  req.log.error({ err: lastErr, batchId, childId }, "akp-video-url proxy failed after retries");
-  res.status(502).json({ error: "Upstream fetch failed after retries" });
 });
 
 // ── PW lecture slides + attachments ─────────────────────────────────────────
@@ -396,73 +353,6 @@ proxyRouter.get("/pw-video/:videoId", async (req, res) => {
     res.status(upstream.status).json(data);
   } catch (err) {
     req.log.error({ err }, "pw-video proxy fetch failed");
-    res.status(502).json({ error: "Upstream fetch failed" });
-  }
-});
-
-// ── PW ClearKey OTP proxy (fetches from pwsecure with proper headers) ──────────
-// Used by the pwsecure fallback path in AkpPlayer/DrmPlayer to exchange a KID
-// for its decryption key. Calling pwsecure directly from the browser gets a
-// 403 because the worker checks Referer/Origin — same reason /pw-video exists.
-proxyRouter.get("/pw-otp", async (req, res) => {
-  const { key } = req.query as Record<string, string>;
-  if (!key) {
-    res.status(400).json({ error: "Missing key" });
-    return;
-  }
-
-  const PW_SECURE = "https://pwsecure.gourav23032009.workers.dev/api/pw";
-  const url = `${PW_SECURE}/v1/videos/get-otp?key=${encodeURIComponent(key)}&isEncoded=true`;
-
-  try {
-    const upstream = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Referer": "https://www.pw.live/",
-        "Origin": "https://www.pw.live",
-        "Accept": "application/json, text/plain, */*",
-      },
-    });
-
-    const data = await upstream.json();
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.status(upstream.status).json(data);
-  } catch (err) {
-    req.log.error({ err }, "pw-otp proxy fetch failed");
-    res.status(502).json({ error: "Upstream fetch failed" });
-  }
-});
-
-// ── api-alpha1 video-info proxy (third video source, community-run) ───────────
-// https://api-alpha1.vercel.app — takes video_id/subject_id/batch_id and
-// resolves the DRM-decrypted stream URL + clear keys directly, no separate
-// OTP/KID round-trip needed. Kept as a further fallback alongside pwsecure
-// and learnbyakp so a single source being down doesn't take the whole
-// player down with it.
-proxyRouter.get("/alpha-video-info", async (req, res) => {
-  const { batchId, subjectId, videoId } = req.query as Record<string, string>;
-  if (!batchId || !subjectId || !videoId) {
-    res.status(400).json({ error: "Missing batchId, subjectId or videoId" });
-    return;
-  }
-
-  try {
-    const upstream = await fetch("https://api-alpha1.vercel.app/getkeys-from-video-info", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        video_id: videoId,
-        subject_id: subjectId,
-        batch_id: batchId,
-      }),
-    });
-
-    const data = await upstream.json();
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cache-Control", "public, max-age=300");
-    res.status(upstream.status).json(data);
-  } catch (err) {
-    req.log.error({ err }, "alpha-video-info proxy fetch failed");
     res.status(502).json({ error: "Upstream fetch failed" });
   }
 });
