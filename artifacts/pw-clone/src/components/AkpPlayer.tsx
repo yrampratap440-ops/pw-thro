@@ -41,6 +41,101 @@ function isHex32(s: string) {
   return /^[0-9a-fA-F]{32}$/.test(s);
 }
 
+// Extract KID directly from MPD XML — used by the pwsecure fallback path,
+// which (unlike learnbyakp) doesn't hand back clearKeys in the JSON response.
+function extractKidFromMpd(mpdText: string): string | null {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(mpdText, "application/xml");
+    const cps = doc.querySelectorAll("ContentProtection");
+    for (const cp of Array.from(cps)) {
+      for (const attr of Array.from(cp.attributes)) {
+        if (attr.localName.toLowerCase() === "default_kid" && attr.value) {
+          return attr.value.replace(/-/g, "").toLowerCase();
+        }
+      }
+    }
+  } catch { /* noop */ }
+  return null;
+}
+
+// Result shape shared by both sources so the rest of setup() doesn't care
+// which one actually produced it.
+interface ResolvedSource {
+  mpdUrl: string;          // full manifest URL to load
+  loadViaProxy: boolean;   // true = fetch through /api/proxy (pwsecure fallback needs special headers)
+  signedQs: string;        // query string to re-attach to unsigned segment requests (learnbyakp only)
+  baseUrl: string;         // manifest URL without query string (learnbyakp only, for hostname matching)
+  shakaKeys: Record<string, string>; // base64url KID -> base64url key, ready for shaka DRM config
+  topic?: string;
+}
+
+// Primary source: learnbyakp via our own proxy (has retry logic server-side).
+async function resolveViaAkp(batchId: string, childId: string): Promise<ResolvedSource> {
+  const infoRes = await fetch(
+    `${PROXY_BASE}/akp-video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`
+  );
+  if (!infoRes.ok) throw new Error(`Video info fetch failed (${infoRes.status})`);
+  const infoJson: ApiResponse = await infoRes.json();
+  const d: VideoUrlData = (infoJson.data ?? infoJson) as VideoUrlData;
+
+  const baseUrl = (d.streamUrl ?? d.url ?? d.directUrl ?? "").split("?")[0];
+  if (!baseUrl) throw new Error("No stream URL returned by API");
+  const signedQs = d.signedUrl ?? "";
+  const mpdUrl = signedQs ? `${baseUrl}${signedQs}` : baseUrl;
+  const clearKeys = d.clearKeys ?? {};
+
+  const shakaKeys: Record<string, string> = {};
+  for (const [kid, key] of Object.entries(clearKeys)) {
+    if (isHex32(kid) && isHex32(key)) {
+      shakaKeys[hexToBase64url(kid)] = hexToBase64url(key);
+    }
+  }
+
+  return { mpdUrl, loadViaProxy: false, signedQs, baseUrl, shakaKeys, topic: d.topic };
+}
+
+// Fallback source: fetch straight from pwsecure (same method DrmPlayer uses).
+// No signed CDN query string here — the manifest is loaded through our own
+// /api/proxy route, which attaches the right Referer/Origin headers.
+async function resolveViaPwSecure(childId: string): Promise<ResolvedSource> {
+  const videoRes = await fetch(`${PW_API_BASE}/videos/${encodeURIComponent(childId)}`);
+  if (!videoRes.ok) throw new Error(`Video details failed (${videoRes.status})`);
+  const videoData = await videoRes.json();
+  const mpdUrl: string | undefined = videoData?.data?.videoUrl;
+  if (!mpdUrl) throw new Error("No MPD URL in video details");
+
+  const mpdRes = await fetch(`${PROXY_BASE}/proxy?url=${encodeURIComponent(mpdUrl)}`);
+  if (!mpdRes.ok) throw new Error(`MPD fetch failed (${mpdRes.status})`);
+  const mpdText = await mpdRes.text();
+  const kid = extractKidFromMpd(mpdText);
+  if (!kid) throw new Error("No KID found in MPD");
+
+  const otpRes = await fetch(`${PW_API_BASE}/videos/get-otp?key=${encodeURIComponent(kid)}&isEncoded=true`);
+  if (!otpRes.ok) throw new Error(`OTP fetch failed (${otpRes.status})`);
+  const otpData = await otpRes.json();
+  const keyHex: string | undefined = otpData?.data?.otp ?? otpData?.data?.key ?? otpData?.key;
+  if (!keyHex) throw new Error("No decryption key returned");
+
+  const shakaKeys: Record<string, string> = { [hexToBase64url(kid)]: hexToBase64url(keyHex) };
+  return { mpdUrl, loadViaProxy: true, signedQs: "", baseUrl: "", shakaKeys };
+}
+
+async function resolveVideoSource(batchId: string, childId: string): Promise<ResolvedSource> {
+  try {
+    return await resolveViaAkp(batchId, childId);
+  } catch (akpErr) {
+    console.warn("[AkpPlayer] learnbyakp source failed, trying pwsecure fallback", akpErr);
+    try {
+      return await resolveViaPwSecure(childId);
+    } catch (fallbackErr) {
+      console.warn("[AkpPlayer] pwsecure fallback also failed", fallbackErr);
+      // Surface the original error — it's usually the more informative one.
+      throw akpErr;
+    }
+  }
+}
+
 function formatTime(secs: number): string {
   if (!isFinite(secs) || secs < 0) return "0:00";
   const h = Math.floor(secs / 3600);
@@ -288,39 +383,16 @@ export function AkpPlayer({ batchId, subjectId = "", scheduleId, childId, poster
       setActiveQuality("auto");
 
       try {
-        // Step 1: Fetch video URL + clearKeys via our own proxy
+        // Step 1: Resolve manifest URL + DRM keys. Tries learnbyakp first
+        // (which has its own server-side retries); if that's genuinely down,
+        // falls back to fetching straight from pwsecure so the video still
+        // plays instead of showing an error.
         setStatusMsg("Fetching video info…");
-        const infoRes = await fetch(
-          `${PROXY_BASE}/akp-video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`
-        );
-        if (!infoRes.ok) throw new Error(`Video info fetch failed (${infoRes.status})`);
-        const infoJson: ApiResponse = await infoRes.json();
-
-        // Normalise — API may return data at root or inside .data
-        const d: VideoUrlData = (infoJson.data ?? infoJson) as VideoUrlData;
-
-        // signedUrl is only the query string (?Signature=...&Policy=...&Key-Pair-Id=...)
-        // Combine with the base streamUrl to get the full signed manifest URL.
-        const baseUrl = (d.streamUrl ?? d.url ?? d.directUrl ?? "").split("?")[0];
-        if (!baseUrl) throw new Error("No stream URL returned by API");
-        const signedQs = d.signedUrl ?? ""; // starts with "?" or is empty
-        const mpdUrl = signedQs ? `${baseUrl}${signedQs}` : baseUrl;
-        const clearKeys = d.clearKeys ?? {};
-        if (!d.topic && d.topic !== "") {
-          // noop
-        } else if (d.topic) {
-          setVideoTitle(d.topic);
-        }
+        const { mpdUrl, loadViaProxy, signedQs, baseUrl, shakaKeys, topic } =
+          await resolveVideoSource(batchId, childId);
+        if (topic) setVideoTitle(topic);
 
         if (cancelled) return;
-
-        // Step 2: Convert clearKeys (hex KID → hex key) to base64url for Shaka
-        const shakaKeys: Record<string, string> = {};
-        for (const [kid, key] of Object.entries(clearKeys)) {
-          if (isHex32(kid) && isHex32(key)) {
-            shakaKeys[hexToBase64url(kid)] = hexToBase64url(key);
-          }
-        }
 
         setStatusMsg("Initializing player…");
 
@@ -429,7 +501,10 @@ export function AkpPlayer({ batchId, subjectId = "", scheduleId, childId, poster
           setQualities(tracks);
         });
 
-        await player.load(mpdUrl);
+        // The learnbyakp manifest is a direct CDN URL (fetched by shaka
+        // directly); the pwsecure fallback manifest needs our /api/proxy
+        // route for its headers, same as DrmPlayer does.
+        await player.load(loadViaProxy ? `${PROXY_BASE}/proxy?url=${encodeURIComponent(mpdUrl)}` : mpdUrl);
 
         if (!cancelled) {
           recoveryAttemptsRef.current = 0;
