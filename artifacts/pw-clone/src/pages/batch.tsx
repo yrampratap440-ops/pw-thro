@@ -108,7 +108,7 @@ function LiveScheduleCard({ item }: { item: ScheduleItem }) {
         title: topic,
         backUrl: `/batch/${batchId}`,
       });
-      window.location.href = `/live-watch?${params.toString()}`;
+      window.location.href = `https://pwthor.live/live-watch?${params.toString()}`;
       return;
     }
     const params = new URLSearchParams({
@@ -116,7 +116,7 @@ function LiveScheduleCard({ item }: { item: ScheduleItem }) {
       title: topic,
       backUrl: `/batch/${batchId}`,
     });
-    window.location.href = `/watch?${params.toString()}`;
+    window.location.href = `https://pwthor.live/watch?${params.toString()}`;
   };
 
   const handleMaterialOpen = (e: React.MouseEvent) => {
