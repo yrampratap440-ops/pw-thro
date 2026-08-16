@@ -68,19 +68,23 @@ export async function claimAccessGeneration(token: string): Promise<string> {
 }
 
 export async function verifyAccessKey(key: string): Promise<boolean> {
-  try {
-    const claimToken = localStorage.getItem(CLAIM_TOKEN_STORAGE) ?? "";
-    const response = await fetch(apiUrl("/access/verify"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, claimToken }),
-    });
-    const result = await response.json();
-    if (response.ok && result.ok && result.claimToken) {
-      localStorage.setItem(CLAIM_TOKEN_STORAGE, result.claimToken);
-    }
-    return response.ok && Boolean(result.ok);
-  } catch {
-    return false;
+  const claimToken = localStorage.getItem(CLAIM_TOKEN_STORAGE) ?? "";
+  const response = await fetch(apiUrl("/access/verify"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, claimToken }),
+  });
+  const result = await response.json();
+  if (response.ok && result.ok && result.claimToken) {
+    localStorage.setItem(CLAIM_TOKEN_STORAGE, result.claimToken);
   }
+  return response.ok && Boolean(result.ok);
+  // Network/parse failures intentionally propagate (no catch-and-swallow
+  // here): a transient backend hiccup must not be treated the same as the
+  // server explicitly saying "this key is invalid". React Query keeps the
+  // previous successful `true` result in place while a background refetch
+  // is erroring, so a flaky network blip no longer force-logs-out someone
+  // mid-video. Swallowing to `false` here used to overwrite that cached
+  // "valid" state with "invalid" on every hiccup, which is what was kicking
+  // users back to /access a few seconds into playback.
 }
