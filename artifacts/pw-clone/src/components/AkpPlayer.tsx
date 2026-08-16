@@ -127,17 +127,68 @@ async function resolveViaPwSecure(childId: string): Promise<ResolvedSource> {
   return { mpdUrl, loadViaProxy: true, signedQs: "", baseUrl: "", shakaKeys };
 }
 
-async function resolveVideoSource(batchId: string, childId: string): Promise<ResolvedSource> {
+// Third fallback source: api-alpha1.vercel.app, a community-run "Penpencil DRM
+// Key Extraction API". Takes video_id/subject_id/batch_id and resolves both
+// the stream URL and clear keys in one call. Routed through our backend
+// (/alpha-video-info) so any CORS restriction on their side isn't a problem.
+//
+// NOTE: this service's exact response shape isn't documented beyond an
+// example for a different endpoint, so this reads a handful of plausible
+// field names defensively (data.url / streamUrl / mpdUrl / manifestUrl, and
+// keys as either an object map or an array of {kid,key}). If it still fails
+// after deploying, share one real response JSON so the field names can be
+// corrected precisely.
+async function resolveViaAlpha(batchId: string, subjectId: string, childId: string): Promise<ResolvedSource> {
+  if (!subjectId) throw new Error("Missing subjectId for alpha source");
+
+  const res = await fetch(
+    `${PROXY_BASE}/alpha-video-info?batchId=${encodeURIComponent(batchId)}&subjectId=${encodeURIComponent(subjectId)}&videoId=${encodeURIComponent(childId)}`
+  );
+  if (!res.ok) throw new Error(`alpha-video-info failed (${res.status})`);
+  const json = await res.json();
+  const d = json?.data ?? json;
+
+  const mpdUrl: string | undefined = d?.url ?? d?.mpdUrl ?? d?.streamUrl ?? d?.manifestUrl ?? d?.dashUrl;
+  if (!mpdUrl) throw new Error("No stream URL in alpha-video-info response");
+
+  const shakaKeys: Record<string, string> = {};
+  const rawKeys = d?.keys ?? d?.clearKeys ?? d?.drmKeys ?? d?.clearkeys;
+  if (Array.isArray(rawKeys)) {
+    for (const entry of rawKeys) {
+      const kid = entry?.kid ?? entry?.keyId ?? entry?.KID;
+      const key = entry?.key ?? entry?.k ?? entry?.Key;
+      if (isHex32(kid) && isHex32(key)) shakaKeys[hexToBase64url(kid)] = hexToBase64url(key);
+    }
+  } else if (rawKeys && typeof rawKeys === "object") {
+    for (const [kid, key] of Object.entries(rawKeys as Record<string, string>)) {
+      if (isHex32(kid) && isHex32(key)) shakaKeys[hexToBase64url(kid)] = hexToBase64url(key);
+    }
+  }
+  if (Object.keys(shakaKeys).length === 0) throw new Error("No usable DRM keys in alpha-video-info response");
+
+  return { mpdUrl, loadViaProxy: true, signedQs: "", baseUrl: "", shakaKeys };
+}
+
+async function resolveVideoSource(batchId: string, subjectId: string, childId: string): Promise<ResolvedSource> {
+  // pwsecure is primary now — learnbyakp.onrender.com has been consistently
+  // returning 5xx (see server logs), so trying it first just adds a long
+  // wait (retries + timeouts) before falling through. Tries pwsecure, then
+  // the api-alpha1 community API, then learnbyakp as a last resort.
   try {
-    return await resolveViaAkp(batchId, childId);
-  } catch (akpErr) {
-    console.warn("[AkpPlayer] learnbyakp source failed, trying pwsecure fallback", akpErr);
+    return await resolveViaPwSecure(childId);
+  } catch (pwErr) {
+    console.warn("[AkpPlayer] pwsecure source failed, trying api-alpha1 fallback", pwErr);
     try {
-      return await resolveViaPwSecure(childId);
-    } catch (fallbackErr) {
-      console.warn("[AkpPlayer] pwsecure fallback also failed", fallbackErr);
-      // Surface the original error — it's usually the more informative one.
-      throw akpErr;
+      return await resolveViaAlpha(batchId, subjectId, childId);
+    } catch (alphaErr) {
+      console.warn("[AkpPlayer] api-alpha1 fallback failed, trying learnbyakp fallback", alphaErr);
+      try {
+        return await resolveViaAkp(batchId, childId);
+      } catch (fallbackErr) {
+        console.warn("[AkpPlayer] learnbyakp fallback also failed", fallbackErr);
+        // Surface the original (pwsecure) error — it's usually the more informative one.
+        throw pwErr;
+      }
     }
   }
 }
@@ -402,7 +453,7 @@ export function AkpPlayer({ batchId, subjectId = "", scheduleId, childId, poster
         // that loop was making a real failure take 15+ seconds and multiple
         // silent retries before finally showing anything to the user.
         setStatusMsg("Fetching video info…");
-        resolved = await resolveVideoSource(batchId, childId);
+        resolved = await resolveVideoSource(batchId, subjectId, childId);
       } catch (err: unknown) {
         if (!cancelled) {
           const e = err as any;
