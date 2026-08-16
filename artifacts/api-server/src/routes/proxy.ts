@@ -150,16 +150,23 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
   const upstream = `https://learnbyakp.onrender.com/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
 
   // learnbyakp.onrender.com is a free-tier Render service — it can be asleep
-  // (cold start) or briefly flaky, which surfaces as a 5xx. Retry a few times
-  // with a short backoff before giving up. 4xx (bad request / not found) is
-  // not retried since that means the data itself is wrong, not transient.
+  // (cold start) or briefly flaky, which surfaces as a 5xx or a long hang.
+  // Retry a few times with a short backoff, but cap each attempt with its
+  // own timeout so a hanging upstream can't block the whole request for
+  // minutes. 4xx (bad request / not found) is not retried since that means
+  // the data itself is wrong, not transient.
   const MAX_ATTEMPTS = 3;
-  const RETRY_DELAYS_MS = [1000, 2500]; // delay before attempt 2 and attempt 3
+  const ATTEMPT_TIMEOUT_MS = 8000; // give up on a single attempt after 8s
+  const RETRY_DELAYS_MS = [500, 1000]; // delay before attempt 2 and attempt 3
 
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ATTEMPT_TIMEOUT_MS);
+
     try {
       const resp = await fetch(upstream, {
+        signal: controller.signal,
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           "Accept": "application/json, */*",
@@ -184,8 +191,14 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
       );
       lastErr = new Error(`Upstream status ${resp.status}`);
     } catch (err) {
-      req.log.warn({ attempt, err, batchId, childId }, "akp-video-url fetch threw, will retry");
-      lastErr = err;
+      const timedOut = err instanceof Error && err.name === "AbortError";
+      req.log.warn(
+        { attempt, err, batchId, childId, timedOut },
+        timedOut ? "akp-video-url attempt timed out, will retry" : "akp-video-url fetch threw, will retry"
+      );
+      lastErr = timedOut ? new Error(`Upstream timed out after ${ATTEMPT_TIMEOUT_MS}ms`) : err;
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (attempt < MAX_ATTEMPTS) {
