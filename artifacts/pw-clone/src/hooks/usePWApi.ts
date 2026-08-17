@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-const API_BASE = "https://pwsecure.gourav23032009.workers.dev/api/pw";
+const API_BASE = "https://vidcloud.eu.org/api";
 const MIN = 1000 * 60;
 
 export interface Batch {
