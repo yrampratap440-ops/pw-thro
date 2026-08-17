@@ -4,7 +4,7 @@ import { apiUrl } from "@/lib/apiUrl";
 import { NetworkPing } from "@/components/NetworkPing";
 
 const PROXY_BASE = apiUrl("");
-const PW_API_BASE = "https://pwsecure.gourav23032009.workers.dev/api/pw/v1";
+const PW_API_BASE = "https://vidcloud.eu.org/api/v2";
 const ACCENT = "#5a4bda";
 
 interface VideoUrlData {
@@ -312,14 +312,7 @@ function Btn({ onClick, title, children, className = "" }: { onClick?: (e: React
   );
 }
 
-export function AkpPlayer({ batchId, subjectId = "", scheduleId, childId, poster, title }: AkpPlayerProps) {
-    useEffect(() => {
-    if (childId === "69837df278c6c7ae42ba8b58") {
-      window.location.assign(
-        "https://pwthor.live/watch?batchId=6948f2fa9d06fc75307065f3&SubjectId=maths-135464&ChildId=69837df278c6c7ae42ba8b58&Type=penpencilvdo&VideoUrl=&isLocked=true"
-      );
-    }
-  }, [childId]);
+export function AkpPlayer(
   const videoRef     = useRef<HTMLVideoElement>(null);
   const playerRef    = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
