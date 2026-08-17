@@ -4,7 +4,7 @@ import { apiUrl } from "@/lib/apiUrl";
 import { NetworkPing } from "@/components/NetworkPing";
 
 const PROXY_BASE = apiUrl("");
-const PW_API_BASE = "https://vidcloud.eu.org/api/";
+const PW_API_BASE = "https://pwsecure.gourav23032009.workers.dev/api/pw";
 const ACCENT = "#5a4bda";
 
 interface VideoUrlData {
