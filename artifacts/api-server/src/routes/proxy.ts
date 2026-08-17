@@ -130,7 +130,7 @@ proxyRouter.get("/vidcloud-stream", async (req, res) => {
 });
 
 // ── learnbyakp video-url proxy ───────────────────────────────────────────────
-// Forwards to https://learnbyakp.onrender.com/api/video-url and returns the
+// Forwards to https://vidcloud.eu.org/api/video-url and returns the
 // full JSON (url, directUrl, streamUrl, signedUrl, clearKeys, vid, topic).
 proxyRouter.options("/akp-video-url", (_req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -145,7 +145,7 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
     return;
   }
 
-  const upstream = `https://learnbyakp.onrender.com/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
+  const upstream = https://vidcloud.eu.org/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
 
   try {
     const resp = await fetch(upstream, {
@@ -170,7 +170,7 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
 // ── PW lecture slides + attachments ─────────────────────────────────────────
 // Keeps the browser independent of the upstream API's CORS and normalizes the
 // two schedule endpoints into the small shape the video player needs.
-const PW_API_BASE = "https://pwsecure.gourav23032009.workers.dev/api/pw/v1";
+const PW_API_BASE = "https://vidcloud.eu.org/api/v2";
 const OBJECT_ID = /^[a-f\d]{24}$/i;
 
 function pwAssetUrl(asset: any, fallback?: string): string {
