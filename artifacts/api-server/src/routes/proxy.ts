@@ -145,14 +145,14 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
     return;
   }
 
-  const upstream = https://vidcloud.eu.org/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
+  const upstream = https://learnbyakp.onrender.com/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
 
   try {
     const resp = await fetch(upstream, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, */*",
-        "Referer": "https://learnbyakp.online/",
+        "Referer": "",
         "Origin": "https://learnbyakp.online",
       },
     });
