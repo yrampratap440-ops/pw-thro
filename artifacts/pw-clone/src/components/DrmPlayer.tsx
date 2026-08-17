@@ -3,7 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { apiUrl } from "@/lib/apiUrl";
 import { NetworkPing } from "@/components/NetworkPing";
 
-const PW_API = "https://vidcloud.eu.org/api/v2";
+const PW_API = "https://vidcloud.eu.org/api";
 const PROXY_BASE = apiUrl("/api");
 const ACCENT = "#5a4bda";
 
