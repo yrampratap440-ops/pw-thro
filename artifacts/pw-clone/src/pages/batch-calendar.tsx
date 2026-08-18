@@ -369,7 +369,9 @@ export default function BatchCalendar() {
                     const thumb = getThumb(vid);
                     const title = vid?.name ?? content.topic ?? "Lecture Video";
                     const dur = fmtDur(vid?.duration);
-                    const watchUrl = `/watch?batchId=${encodeURIComponent(batchId!)}&subjectId=${encodeURIComponent(content.subjectId)}&videoId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}&backUrl=${encodeURIComponent(`/batch/${batchId}/calendar`)}`;
+                    // Play directly via vidcloud.eu.org's player (iframe) instead of
+                    // going through our own proxy, which can 500 upstream.
+                    const watchUrl = `/schedule-watch?batchId=${encodeURIComponent(batchId!)}&subjectId=${encodeURIComponent(content.subjectId)}&scheduleId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
 
                     return (
                       <motion.div
