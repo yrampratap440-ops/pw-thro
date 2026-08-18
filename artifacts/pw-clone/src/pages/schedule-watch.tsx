@@ -4,11 +4,22 @@ import { useWatchHistory } from "@/hooks/useWatchHistory";
 // Vidcloud plays video directly in browser when accessed top-level.
 // Simplest solution: redirect to vidcloud player. User can login there,
 // watch, and use back button to return. No proxy/iframe complexity.
+//
+// Note: Set referrer policy to allow cross-domain redirect without
+// triggering vidcloud's anti-bot checks.
 
 export default function ScheduleWatch() {
   const { addToHistory } = useWatchHistory();
 
   useEffect(() => {
+    // Set referrer policy to allow vidcloud redirect
+    if (!document.querySelector('meta[name="referrer"]')) {
+      const meta = document.createElement('meta');
+      meta.name = 'referrer';
+      meta.content = 'no-referrer';
+      document.head.appendChild(meta);
+    }
+
     const sp = new URLSearchParams(window.location.search);
     const batchId = sp.get("batchId") || "";
     const subjectId = sp.get("subjectId") || "";
@@ -34,7 +45,8 @@ export default function ScheduleWatch() {
         play_type: "Lecture",
       }).toString()}`;
 
-      window.location.href = playerUrl;
+      // Use replace() to avoid leaving this page in history
+      window.location.replace(playerUrl);
     }
   }, []);
 
