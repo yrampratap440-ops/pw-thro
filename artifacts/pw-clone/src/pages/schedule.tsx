@@ -114,12 +114,13 @@ function ScheduleCard({ item, batchName, now: _now }: ScheduleCardProps) {
   const handleClick = () => {
     if (!isVideo || status === "upcoming") return;
     const params = new URLSearchParams({
-      batchId, subjectId, videoId: scheduleId,
+      batchId, subjectId, scheduleId, topicId,
       title: item.data.topic.trim(),
-      backUrl: `/schedule`,
-      ...(status === "live" ? { video_type: "live", topicId } : {}),
+      thumbnail: thumbUrl ?? "",
     });
-    window.location.href = `https://pwthor.live/watch?${params.toString()}`;
+    // Play directly via vidcloud.eu.org's player (iframe) instead of
+    // going through our own proxy, which can 500 upstream.
+    window.location.href = `/schedule-watch?${params.toString()}`;
   };
 
   const handleMaterialOpen = (e: React.MouseEvent) => {
