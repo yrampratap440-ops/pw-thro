@@ -76,13 +76,13 @@ function isAllowedPdfHost(hostname: string): boolean {
 // Fetches vidcloud's play.php page (which has PW auth baked in) and extracts
 // any CloudFront signed MPD/HLS/M3U8 URLs embedded in the page source.
 proxyRouter.get("/vidcloud-stream", async (req, res) => {
-  const { batchId, subjectId, videoId } = req.query as Record<string, string>;
+  const { batchId, subjectId, videoId, topicId } = req.query as Record<string, string>;
   if (!batchId || !videoId) {
     res.status(400).json({ error: "Missing batchId or videoId" });
     return;
   }
 
-  const vidcloudUrl = `https://vidcloud.eu.org/play.php?batch_id=${encodeURIComponent(batchId)}&subject_id=${encodeURIComponent(subjectId || "")}&video_id=${encodeURIComponent(videoId)}&video_type=new`;
+  const vidcloudUrl = `https://vidcloud.eu.org/play.php?batch_id=${encodeURIComponent(batchId)}&subject_id=${encodeURIComponent(subjectId || "")}&topic_id=${encodeURIComponent(topicId || videoId)}&video_id=${encodeURIComponent(videoId)}&video_type=new&play_type=Lecture`;
 
   try {
     const upstream = await fetch(vidcloudUrl, {
