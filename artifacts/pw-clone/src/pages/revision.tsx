@@ -155,7 +155,7 @@ function DueCard({
   const isOverdue = item.nextRevisionAt < Date.now();
 
   const watchUrl = item.subjectId && item.topicId
-    ? `/watch?batchId=${item.batchId}&subjectId=${item.subjectId}&topicId=${item.topicId}&videoId=${item.id}&title=${encodeURIComponent(item.title)}`
+    ? `/schedule-watch?batchId=${item.batchId}&subjectId=${item.subjectId}&topicId=${item.topicId}&scheduleId=${item.id}&title=${encodeURIComponent(item.title)}`
     : null;
 
   const notesUrl = item.subjectId && item.topicId
