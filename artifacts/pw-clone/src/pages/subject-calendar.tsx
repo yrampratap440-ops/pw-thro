@@ -230,7 +230,9 @@ export default function SubjectCalendar() {
                       const thumb = getVideoThumb(vid);
                       const title = vid?.name ?? content.topic ?? "Lecture Video";
                       const dur = fmtDur(vid?.duration);
-                      const watchUrl = `/watch?batchId=${encodeURIComponent(batchId!)}&subjectId=${encodeURIComponent(subjectId!)}&videoId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
+                      // Play directly via vidcloud.eu.org's player (iframe) instead of
+                      // going through our own proxy, which can 500 upstream.
+                      const watchUrl = `/schedule-watch?batchId=${encodeURIComponent(batchId!)}&subjectId=${encodeURIComponent(subjectId!)}&scheduleId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
 
                       return (
                         <motion.div
