@@ -108,15 +108,16 @@ function LiveScheduleCard({ item }: { item: ScheduleItem }) {
         title: topic,
         backUrl: `/batch/${batchId}`,
       });
-      window.location.href = `https://pwthor.live/live-watch?${params.toString()}`;
+      window.location.href = `/live-watch?${params.toString()}`;
       return;
     }
     const params = new URLSearchParams({
-      batchId, subjectId, videoId: scheduleId,
+      batchId, subjectId, scheduleId, topicId,
       title: topic,
-      backUrl: `/batch/${batchId}`,
     });
-    window.location.href = `https://pwthor.live/watch?${params.toString()}`;
+    // Play directly via vidcloud.eu.org's player (iframe) instead of
+    // going through our own proxy, which can 500 upstream.
+    window.location.href = `/schedule-watch?${params.toString()}`;
   };
 
   const handleMaterialOpen = (e: React.MouseEvent) => {
