@@ -308,7 +308,9 @@ function VideosTabContent({ batchId, subjectId, topicId, contentType }: TabConte
           ? new Date(content.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
           : null;
 
-        const watchUrl = `/watch?batchId=${encodeURIComponent(batchId)}&subjectId=${encodeURIComponent(subjectId)}&topicId=${encodeURIComponent(topicId)}&videoId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
+        // Play directly via vidcloud.eu.org's player (iframe) instead of
+        // going through our own proxy, which can 500 upstream.
+        const watchUrl = `/schedule-watch?batchId=${encodeURIComponent(batchId)}&subjectId=${encodeURIComponent(subjectId)}&topicId=${encodeURIComponent(topicId)}&scheduleId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
 
         const done = isCompleted(content._id);
         return (
