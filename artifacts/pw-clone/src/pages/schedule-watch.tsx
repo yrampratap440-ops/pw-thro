@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "@/hooks/useTheme";
 
-const PLAYER_BASE = "https://learnbyakp.online/study-v2/player";
+// learnbyakp.online shut down — switched to vidcloud.eu.org's player page.
+const PLAYER_BASE = "https://vidcloud.eu.org/play.php";
 
 export default function ScheduleWatch() {
   const [params, setParams] = useState({
     batchId: "", subjectId: "", scheduleId: "",
-    title: "", thumbnail: "",
+    title: "", thumbnail: "", topicId: "",
   });
   const [historyAdded, setHistoryAdded] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -32,6 +33,7 @@ export default function ScheduleWatch() {
       scheduleId: sp.get("scheduleId") || "",
       title: sp.get("title") || sp.get("topic") || "Lecture Video",
       thumbnail: sp.get("thumbnail") || "",
+      topicId: sp.get("topicId") || "",
     };
     setParams(p);
 
@@ -51,7 +53,16 @@ export default function ScheduleWatch() {
   const hasParams = !!(params.batchId && params.scheduleId);
 
   const playerUrl = hasParams
-    ? `${PLAYER_BASE}?batch_id=${encodeURIComponent(params.batchId)}&subject_id=${encodeURIComponent(params.subjectId)}&video_id=${encodeURIComponent(params.scheduleId)}&schedule_id=${encodeURIComponent(params.scheduleId)}&title=${encodeURIComponent(params.title)}`
+    ? `${PLAYER_BASE}?${new URLSearchParams({
+        batch_id: params.batchId,
+        subject_id: params.subjectId,
+        topic_id: params.topicId || params.scheduleId,
+        video_id: params.scheduleId,
+        video_name: params.title,
+        video_img: params.thumbnail,
+        video_type: "new",
+        play_type: "Lecture",
+      }).toString()}`
     : "";
 
   const bg        = isDark ? "radial-gradient(ellipse at center, #0d1117 0%, #060a10 100%)" : "radial-gradient(ellipse at center, #eef2ff 0%, #f8faff 100%)";
