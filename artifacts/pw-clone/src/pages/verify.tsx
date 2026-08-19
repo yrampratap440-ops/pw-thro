@@ -69,6 +69,7 @@ const styles = {
 
 export default function VerifyPage() {
   const [status, setStatus] = useState<"checking" | "success" | "failed">("checking");
+  const [errorMessage, setErrorMessage] = useState("");
   const [, setLocation] = useLocation();
 
   useEffect(() => {
@@ -91,10 +92,16 @@ export default function VerifyPage() {
           setStatus("success");
           setTimeout(() => setLocation("/pw"), 1800);
         } else {
+          setErrorMessage("The access key could not be verified.");
           setStatus("failed");
         }
-      } catch {
-        if (!cancelled) setStatus("failed");
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : "Unable to verify the generation.";
+          console.error("Access verification failed:", error);
+          setErrorMessage(message);
+          setStatus("failed");
+        }
       }
     }, 600);
     return () => {
@@ -136,7 +143,9 @@ export default function VerifyPage() {
           {status === "failed" && (
             <motion.div key="failed" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               <h2 style={styles.title}>Verification Failed</h2>
-              <p style={styles.copy}>Your key expired or wasn't found.</p>
+              <p style={styles.copy}>
+                {errorMessage || "Your key expired or wasn't found."}
+              </p>
               <button style={styles.link} onClick={() => setLocation("/access")}>
                 Generate a new key
               </button>
