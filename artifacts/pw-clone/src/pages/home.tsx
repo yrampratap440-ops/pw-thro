@@ -113,7 +113,7 @@ function TelegramModal({ batchName, onClose }: { batchName: string; onClose: () 
           {/* Buttons */}
           <div className="flex flex-col gap-2">
             <a
-              href="https://t.me/pwxonrender"
+              href="https://t.me/PWrender"
               target="_blank"
               rel="noopener noreferrer"
               onClick={onClose}
@@ -138,7 +138,7 @@ function TelegramModal({ batchName, onClose }: { batchName: string; onClose: () 
   );
 }
 
-const SITE_URL = "https://pwx.pages.dev";
+const SITE_URL = "https://pwx-main1.onrender.com";
 const SHARE_TEXT = "🔥 PWX — Physics Wallah ke saare FREE batches ek jagah! IIT JEE, NEET, Foundation — sab free! Dekho:";
 
 function PinnedChaptersSection() {
