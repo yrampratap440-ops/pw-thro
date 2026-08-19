@@ -76,13 +76,13 @@ function isAllowedPdfHost(hostname: string): boolean {
 // Fetches vidcloud's play.php page (which has PW auth baked in) and extracts
 // any CloudFront signed MPD/HLS/M3U8 URLs embedded in the page source.
 proxyRouter.get("/vidcloud-stream", async (req, res) => {
-  const { batchId, subjectId, videoId } = req.query as Record<string, string>;
+  const { batchId, subjectId, videoId, topicId } = req.query as Record<string, string>;
   if (!batchId || !videoId) {
     res.status(400).json({ error: "Missing batchId or videoId" });
     return;
   }
 
-  const vidcloudUrl = `https://vidcloud.eu.org/play.php?batch_id=${encodeURIComponent(batchId)}&subject_id=${encodeURIComponent(subjectId || "")}&video_id=${encodeURIComponent(videoId)}&video_type=new`;
+  const vidcloudUrl = `https://vidcloud.eu.org/play.php?batch_id=${encodeURIComponent(batchId)}&subject_id=${encodeURIComponent(subjectId || "")}&topic_id=${encodeURIComponent(topicId || videoId)}&video_id=${encodeURIComponent(videoId)}&video_type=new&play_type=Lecture`;
 
   try {
     const upstream = await fetch(vidcloudUrl, {
@@ -102,11 +102,16 @@ proxyRouter.get("/vidcloud-stream", async (req, res) => {
       /https?:\/\/[^"'\s]+cloudfront\.net[^"'\s]*(?:\.mpd|\.m3u8|\.master)[^"'\s]*/gi,
       // Unsigned CloudFront MPD/HLS
       /https?:\/\/[^"'\s]+cloudfront\.net\/[^"'\s]+\.(?:mpd|m3u8)[^"'\s]*/gi,
+      // testwave.cc and similar CDNs (used by vidcloud)
+      /https?:\/\/[^"'\s]*testwave\.cc[^"'\s]*(?:\.mpd|\.m3u8|\/master)[^"'\s]*/gi,
+      /https?:\/\/[^"'\s]*testwave[^"'\s]*(?:\.mpd|\.m3u8)[^"'\s]*/gi,
       // PW CDN
       /https?:\/\/[^"'\s]+(?:pw\.live|mediacdn\.pw)[^"'\s]+\.(?:mpd|m3u8)[^"'\s]*/gi,
-      // Any MPD/HLS in JSON-like strings
-      /"(https?:\/\/[^"]+\.(?:mpd|m3u8)[^"]*)"/gi,
-      /'(https?:\/\/[^']+\.(?:mpd|m3u8)[^']*)'/gi,
+      // Generic .m3u8/.mpd/.master URLs in data attributes or JSON
+      /(?:url|src|href)["\s:=]*["']?(https?:\/\/[^"'\s<>]+\.(?:m3u8|mpd|master)[^"'\s<>]*)["']?/gi,
+      // HLS/DASH in quoted JSON strings
+      /"(https?:\/\/[^"]+\.(?:mpd|m3u8|master)[^"]*)"/gi,
+      /'(https?:\/\/[^']+\.(?:mpd|m3u8|master)[^']*)'/gi,
     ];
 
     const found = new Set<string>();
@@ -117,10 +122,17 @@ proxyRouter.get("/vidcloud-stream", async (req, res) => {
       }
     }
 
+    const urls = [...found].filter(u => 
+      u && (u.includes('.m3u8') || u.includes('.mpd') || u.includes('.master'))
+    );
+
     res.setHeader("Access-Control-Allow-Origin", "*");
+    if (urls.length === 0) {
+      req.log.warn({ pageLength: html.length }, "No stream URLs found in vidcloud response");
+    }
     res.json({
-      urls: [...found],
-      // Also include the raw page length for debugging
+      url: urls[0] || null,
+      urls: urls,
       pageLength: html.length,
     });
   } catch (err) {
@@ -129,10 +141,9 @@ proxyRouter.get("/vidcloud-stream", async (req, res) => {
   }
 });
 
-// ── learnbyakp video-url proxy with fallback ─────────────────────────────────
-// Forwards to https://learnbyakp.onrender.com/api/video-url
-// If that fails, tries fallback server (vidcloud)
-// Returns the full JSON (url, directUrl, streamUrl, signedUrl, clearKeys, vid, topic).
+// ── learnbyakp video-url proxy ───────────────────────────────────────────────
+// Forwards to https://learnbyakp.onrender.com/api/video-url and returns the
+// full JSON (url, directUrl, streamUrl, signedUrl, clearKeys, vid, topic).
 proxyRouter.options("/akp-video-url", (_req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -146,57 +157,25 @@ proxyRouter.get("/akp-video-url", async (req, res) => {
     return;
   }
 
-  // Primary server
-  const primaryUrl = `https://learnbyakp.onrender.com/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
-  
-  // Fallback server - CHANGE THIS TO YOUR VIDCLOUD DOMAIN
-  const fallbackUrl = `https://vidcloud.eu.org/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
-
-  const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json, */*",
-    "Referer": "https://learnbyakp.online/",
-    "Origin": "https://learnbyakp.online",
-  };
+  const upstream = `https://learnbyakp.onrender.com/api/video-url?batchId=${encodeURIComponent(batchId)}&childId=${encodeURIComponent(childId)}`;
 
   try {
-    // Try PRIMARY first
-    console.log("[VIDEO] Trying PRIMARY server:", primaryUrl);
-    let resp = await fetch(primaryUrl, { headers });
+    const resp = await fetch(upstream, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, */*",
+        "Referer": "https://learnbyakp.online/",
+        "Origin": "https://learnbyakp.online",
+      },
+    });
 
-    if (resp.ok) {
-      const data = await resp.json();
-      console.log("[VIDEO] PRIMARY server succeeded");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Cache-Control", "public, max-age=300");
-      res.setHeader("X-Video-Source", "primary");
-      res.status(resp.status).json(data);
-      return;
-    }
-
-    // PRIMARY failed, try FALLBACK
-    console.log("[VIDEO] PRIMARY failed. Trying FALLBACK server:", fallbackUrl);
-    resp = await fetch(fallbackUrl, { headers });
-
-    if (resp.ok) {
-      const data = await resp.json();
-      console.log("[VIDEO] FALLBACK server succeeded");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Cache-Control", "public, max-age=300");
-      res.setHeader("X-Video-Source", "fallback");
-      res.status(resp.status).json(data);
-      return;
-    }
-
-    // Both failed
-    console.log("[VIDEO] Both PRIMARY and FALLBACK servers failed");
-    req.log.error("akp-video-url: Both primary and fallback servers failed");
+    const data = await resp.json();
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.status(502).json({ error: "Video unavailable on all servers" });
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.status(resp.status).json(data);
   } catch (err) {
     req.log.error({ err }, "akp-video-url proxy fetch failed");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.status(502).json({ error: "Video fetch failed" });
+    res.status(502).json({ error: "Upstream fetch failed" });
   }
 });
 
@@ -254,55 +233,145 @@ function normalizeAttachments(schedule: any) {
   return attachments;
 }
 
-proxyRouter.options("/pw-slides", (_req, res) => {
+proxyRouter.options("/pw-schedule-assets", (_req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.status(204).end();
 });
 
-proxyRouter.get("/pw-slides", async (req, res) => {
+proxyRouter.get("/pw-schedule-assets", async (req, res) => {
   const { batchId, subjectId, scheduleId } = req.query as Record<string, string>;
-  if (!batchId || !subjectId || !scheduleId || !OBJECT_ID.test(scheduleId)) {
-    res.status(400).json({ error: "Missing or invalid batchId, subjectId, or scheduleId" });
+  if (!OBJECT_ID.test(batchId ?? "") || !OBJECT_ID.test(subjectId ?? "") || !OBJECT_ID.test(scheduleId ?? "")) {
+    res.status(400).json({ success: false, error: "Invalid batch, subject, or schedule id" });
     return;
   }
 
-  const resourceBase = `${PW_API_BASE}/batches/${encodeURIComponent(batchId)}/subject/${encodeURIComponent(subjectId)}/schedule/${encodeURIComponent(scheduleId)}`;
-
+  const base = `${PW_API_BASE}/batches/${batchId}/subject/${subjectId}/schedule/${scheduleId}`;
   try {
     const [slidesResponse, detailsResponse] = await Promise.all([
-      fetch(`${resourceBase}/slides`, { headers: { Accept: "application/json" } }),
-      fetch(`${resourceBase}/schedule-details`, { headers: { Accept: "application/json" } }),
+      fetch(`${base}/slides`, { headers: { Accept: "application/json" } }),
+      fetch(`${base}/schedule-details`, { headers: { Accept: "application/json" } }),
     ]);
+    if (!slidesResponse.ok || !detailsResponse.ok) {
+      res.status(502).json({ success: false, error: "Lecture resources are unavailable" });
+      return;
+    }
 
     const [slidesJson, detailsJson] = await Promise.all([
-      slidesResponse.json(),
-      detailsResponse.json(),
+      slidesResponse.json() as Promise<any>,
+      detailsResponse.json() as Promise<any>,
     ]);
-
-    const slideSource = slidesJson?.data?.slides ?? slidesJson?.data ?? slidesJson?.slides ?? [];
+    const slideSource = slidesJson?.data?.slides ?? slidesJson?.slides ?? [];
     const slides = (Array.isArray(slideSource) ? slideSource : [])
       .filter((slide: any) => slide?.slideForTimeline !== false)
       .map(normalizeSlide)
-      .filter((slide: any): slide is any => slide !== null)
+      .filter(Boolean)
       .sort((a: any, b: any) => a.timestamp - b.timestamp);
-
     const schedule = detailsJson?.data ?? detailsJson;
-    const attachments = normalizeAttachments(schedule);
 
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "public, max-age=300");
-    res.json({ slides, attachments });
+    res.json({
+      success: true,
+      data: {
+        slides,
+        attachments: normalizeAttachments(schedule),
+        topic: schedule?.topic ?? "",
+      },
+    });
   } catch (err) {
-    req.log.error({ err }, "pw-slides proxy fetch failed");
+    req.log.error({ err }, "PW schedule assets proxy failed");
+    res.status(502).json({ success: false, error: "Failed to load lecture resources" });
+  }
+});
+
+// ── Direct video download proxy ──────────────────────────────────────────────
+// Manifest/DRM URLs are intentionally not accepted here. The player only calls
+// this route when the upstream API exposes a real media file URL.
+proxyRouter.get("/video-download", async (req, res) => {
+  const rawUrl = req.query.url as string | undefined;
+  const requestedName = req.query.filename as string | undefined;
+  if (!rawUrl) {
+    res.status(400).json({ error: "Missing video URL" });
+    return;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    res.status(400).json({ error: "Invalid video URL" });
+    return;
+  }
+
+  if (!isAllowedCdnHost(parsed.hostname) || !/\.(mp4|webm|mov|m4v|mkv)$/i.test(parsed.pathname)) {
+    res.status(403).json({ error: "Only direct media files can be downloaded" });
+    return;
+  }
+
+  try {
+    let upstream: Response | null = null;
+    for (const headers of CDN_HEADER_VARIANTS) {
+      const response = await fetch(parsed, { headers });
+      if (response.status !== 403) {
+        upstream = response;
+        break;
+      }
+    }
+    if (!upstream || !upstream.ok || !upstream.body) {
+      res.status(upstream?.status || 502).json({ error: "Video download failed" });
+      return;
+    }
+
+    const safeName = (requestedName || "pwx-video.mp4")
+      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .slice(0, 120);
+    res.status(200);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+    const contentLength = upstream.headers.get("content-length");
+    if (contentLength) res.setHeader("Content-Length", contentLength);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+    Readable.fromWeb(upstream.body as any).pipe(res);
+  } catch (err) {
+    req.log.error({ err }, "video download proxy failed");
+    if (!res.headersSent) res.status(502).json({ error: "Video download failed" });
+  }
+});
+
+// ── PW video metadata proxy (fetches from pwsecure with proper headers) ────────
+proxyRouter.get("/pw-video/:videoId", async (req, res) => {
+  const { videoId } = req.params as { videoId: string };
+  if (!videoId) {
+    res.status(400).json({ error: "Missing videoId" });
+    return;
+  }
+
+  const PW_SECURE = "https://pwsecure.gourav23032009.workers.dev/api/pw";
+  const url = `${PW_SECURE}/v1/videos/${encodeURIComponent(videoId)}`;
+
+  try {
+    const upstream = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://www.pw.live/",
+        "Origin": "https://www.pw.live",
+        "Accept": "application/json, text/plain, */*",
+      },
+    });
+
+    const data = await upstream.json();
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.status(upstream.status).json(data);
+  } catch (err) {
+    req.log.error({ err }, "pw-video proxy fetch failed");
     res.status(502).json({ error: "Upstream fetch failed" });
   }
 });
 
-// ── PDF proxy ────────────────────────────────────────────────────────────────
-proxyRouter.options("/pdf", (_req, res) => {
+proxyRouter.options(["/proxy", "/pdf", "/dash-seg/*path"], (_req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   res.status(204).end();
 });
 
@@ -313,9 +382,12 @@ proxyRouter.get("/pdf", async (req, res) => {
     return;
   }
 
+  let fullUrl = rawUrl;
+  if (!fullUrl.startsWith("http")) fullUrl = `https://${fullUrl}`;
+
   let parsed: URL;
   try {
-    parsed = new URL(rawUrl);
+    parsed = new URL(fullUrl);
   } catch {
     res.status(400).json({ error: "Invalid URL" });
     return;
@@ -327,7 +399,6 @@ proxyRouter.get("/pdf", async (req, res) => {
   }
 
   try {
-    const fullUrl = rawUrl;
     const upstream = await fetch(fullUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; PWX/1.0)",
@@ -500,6 +571,35 @@ proxyRouter.get("/rarestudy-pdf", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "rarestudy-pdf fetch failed");
     res.status(502).json({ error: "Upstream fetch failed" });
+  }
+});
+
+// ── pwthor.live video URL proxy (bypasses CORS) ────────────────────────────
+proxyRouter.post("/pwthor-video-url", async (req, res) => {
+  const { batchId, SubjectId, ChildId } = req.body;
+  if (!batchId || !ChildId) {
+    res.status(400).json({ error: "Missing batchId or ChildId" });
+    return;
+  }
+
+  try {
+    const upstream = await fetch("https://pwthor.live/api/get-video-url", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://pwthor.live/study",
+      },
+      credentials: "include", // Include cookies if needed
+      body: JSON.stringify({ batchId, SubjectId, ChildId }),
+    });
+
+    const data = await upstream.json();
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.status(upstream.status).json(data);
+  } catch (err) {
+    req.log.error({ err }, "pwthor-video-url fetch failed");
+    res.status(502).json({ error: "Upstream fetch failed", details: (err as Error).message });
   }
 });
 
