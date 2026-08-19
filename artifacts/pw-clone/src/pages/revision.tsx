@@ -154,8 +154,8 @@ function DueCard({
   const [recalling, setRecalling] = useState(false);
   const isOverdue = item.nextRevisionAt < Date.now();
 
-  const watchUrl = item.subjectId && item.topicId
-    ? `/schedule-watch?batchId=${item.batchId}&subjectId=${item.subjectId}&topicId=${item.topicId}&scheduleId=${item.id}&title=${encodeURIComponent(item.title)}`
+  const watchUrl = item.subjectId
+    ? `/schedule-watch?batchId=${item.batchId}&SubjectId=${item.subjectId}&ChildId=${item.id}&title=${encodeURIComponent(item.title)}`
     : null;
 
   const notesUrl = item.subjectId && item.topicId
