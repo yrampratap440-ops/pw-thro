@@ -371,7 +371,7 @@ export default function BatchCalendar() {
                     const dur = fmtDur(vid?.duration);
                     // Play directly via vidcloud.eu.org's player (iframe) instead of
                     // going through our own proxy, which can 500 upstream.
-                    const watchUrl = `/schedule-watch?batchId=${encodeURIComponent(batchId!)}&subjectId=${encodeURIComponent(content.subjectId)}&scheduleId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
+                    const watchUrl = `/schedule-watch?batchId=${encodeURIComponent(batchId!)}&SubjectId=${encodeURIComponent(content.subjectId)}&ChildId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
 
                     return (
                       <motion.div
