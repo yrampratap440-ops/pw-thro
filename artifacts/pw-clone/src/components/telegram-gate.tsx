@@ -76,7 +76,7 @@ const t = {
 const STORAGE_KEY = "pwx_tg_auth";
 const SESSION_KEY = "pwx_tg_session"; // sessionStorage key for current session
 const EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (1 week)
-const CHANNEL_URL = "https://t.me/pwxonrender";
+const CHANNEL_URL = "https://t.me/PWrender";
 
 interface StoredAuth {
   user: { id: string; name: string };
@@ -239,7 +239,7 @@ export function TelegramGate({ children }: { children: React.ReactNode }) {
   if (!gateEnabled) return <>{children}</>;
 
   const tx = t[lang];
-  const CHANNEL = "pwxonrender";
+  const CHANNEL = "PWrender";
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center px-4">
