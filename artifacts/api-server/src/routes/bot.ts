@@ -1,7 +1,7 @@
 /**
  * Telegram Bot webhook handler.
  * Handles both PWX and Vibrant Academy access via start-parameter prefix:
- *   pwx_<sessionId>  → checks @pwxonrender channel
+ *   pwx_<sessionId>  → checks @PWrender channel
  *   ss_<sessionId>   → checks @studysquadpro channel
  */
 import { Router } from "express";
@@ -14,8 +14,8 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 // Channel config keyed by prefix
 const APPS: Record<string, { channel: string; channelUrl: string; label: string }> = {
   pwx: {
-    channel:    process.env.TELEGRAM_CHANNEL ?? "@pwxonrender",
-    channelUrl: "https://t.me/pwxonrender",
+    channel:    process.env.TELEGRAM_CHANNEL ?? "@PWrender",
+    channelUrl: "https://t.me/PWrender",
     label:      "PWX",
   },
   ss: {
