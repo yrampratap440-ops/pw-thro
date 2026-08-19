@@ -10,7 +10,7 @@ import { createSession, verifyCode } from "../lib/tg-sessions";
 
 const router = Router();
 
-const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME ?? "pwxsubscribebot";
+const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME ?? "pwxrender_bot";
 const ADMIN_BYPASS_CODE = "032009";
 
 // Create a new verification session (PWX — checks @pwxonrender)
