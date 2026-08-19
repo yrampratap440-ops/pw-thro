@@ -310,7 +310,7 @@ function VideosTabContent({ batchId, subjectId, topicId, contentType }: TabConte
 
         // Play directly via vidcloud.eu.org's player (iframe) instead of
         // going through our own proxy, which can 500 upstream.
-        const watchUrl = `/schedule-watch?batchId=${encodeURIComponent(batchId)}&subjectId=${encodeURIComponent(subjectId)}&topicId=${encodeURIComponent(topicId)}&scheduleId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
+        const watchUrl = `/schedule-watch?batchId=${encodeURIComponent(batchId)}&SubjectId=${encodeURIComponent(subjectId)}&ChildId=${encodeURIComponent(content._id)}&title=${encodeURIComponent(title)}`;
 
         const done = isCompleted(content._id);
         return (
