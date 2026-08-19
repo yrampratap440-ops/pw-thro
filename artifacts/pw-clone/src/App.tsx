@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LoadingBar } from "@/components/loading-bar";
 import DevToolsBlocked from "@/pages/devtools-blocked";
@@ -60,7 +60,52 @@ function ScrollToTop() {
 // Gate: the admin can switch this off globally. When enabled, every visitor
 // must present a currently active key from the server.
 function AccessGate({ children }: { children: React.ReactNode }) {
-  // Access-key gate permanently disabled — all users get direct access.
+  const [location] = useLocation();
+  const { data: gateSetting, isLoading: gateLoading } = useAccessGateSetting();
+  const [status, setStatus] = useState<"checking" | "allowed" | "denied">("checking");
+  // Once a key has verified successfully in this session, don't hit the
+  // server again on every route change.
+  const verifiedRef = useRef(false);
+
+  // /access and /verify must always render — they're how a visitor gets
+  // or redeems a key in the first place. Gating them would be a redirect loop.
+  const isBypassRoute = location === "/access" || location === "/verify";
+
+  useEffect(() => {
+    if (isBypassRoute) return;
+    if (verifiedRef.current) {
+      setStatus("allowed");
+      return;
+    }
+    if (gateLoading) return;
+
+    const gateEnabled =
+      gateSetting?.value && typeof gateSetting.value === "object" && "enabled" in gateSetting.value
+        ? Boolean((gateSetting.value as { enabled?: unknown }).enabled)
+        : true;
+
+    if (!gateEnabled) {
+      verifiedRef.current = true;
+      setStatus("allowed");
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const key = getStoredAccessKey();
+      const valid = key ? await verifyAccessKey(key) : false;
+      if (cancelled) return;
+      if (valid) verifiedRef.current = true;
+      setStatus(valid ? "allowed" : "denied");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [location, isBypassRoute, gateLoading, gateSetting]);
+
+  if (isBypassRoute) return <>{children}</>;
+  if (status === "checking") return null;
+  if (status === "denied") return <Redirect to="/access" />;
   return <>{children}</>;
 }
 
