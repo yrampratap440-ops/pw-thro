@@ -61,15 +61,14 @@ export default function ScheduleWatch() {
 
   const playVideo = async (batchId: string, subjectId: string, childId: string) => {
     try {
-      // Fetch video URL + DRM keys from pwthor.live
-      const res = await fetch("https://pwthor.live/api/get-video-url", {
+      // Fetch video URL + DRM keys via our backend proxy (bypasses CORS)
+      const res = await fetch("/api/pwthor-video-url", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ batchId, SubjectId: subjectId, ChildId: childId }),
       });
 
-      if (!res.ok) throw new Error(`API returned ${res.status}`);
+      if (!res.ok) throw new Error(`Proxy returned ${res.status}`);
 
       const json = await res.json();
       const { url, clearKeys, pssh } = json.data || {};
