@@ -587,16 +587,54 @@ proxyRouter.post("/pwthor-video-url", async (req, res) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://pwthor.live/study",
+        "Origin": "https://pwthor.live",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
       },
-      credentials: "include", // Include cookies if needed
-      body: JSON.stringify({ batchId, SubjectId, ChildId }),
+      body: JSON.stringify({ batchId, SubjectId: SubjectId || "", ChildId }),
     });
 
-    const data = await upstream.json();
+    const responseText = await upstream.text();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      req.log.error({
+        status: upstream.status,
+        body: responseText.substring(0, 500),
+      }, "pwthor API returned non-JSON");
+      res.status(502).json({ 
+        error: "Invalid response from pwthor.live",
+        status: upstream.status,
+      });
+      return;
+    }
+
+    if (!upstream.ok) {
+      req.log.warn({
+        status: upstream.status,
+        data: data,
+      }, "pwthor API error");
+      res.status(upstream.status).json({
+        error: data.error || "pwthor.live API error",
+        data: data,
+      });
+      return;
+    }
+
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.status(upstream.status).json(data);
+    res.status(200).json(data);
   } catch (err) {
     req.log.error({ err }, "pwthor-video-url fetch failed");
     res.status(502).json({ error: "Upstream fetch failed", details: (err as Error).message });
