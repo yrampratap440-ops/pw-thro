@@ -4,7 +4,7 @@ import { generateAndRedirect, prepareAccessGeneration, storePendingGeneration, s
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 
-const AROLINKS_URL = "https://arolinks.com/vSDzpK";
+const AROLINKS_URL = "https://arolinks.com/pO3yno";
 
 const styles = {
   shell: {
