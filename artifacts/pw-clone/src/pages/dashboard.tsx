@@ -71,7 +71,7 @@ function BatchProgressBar({
 
 export default function Dashboard() {
   usePageMeta({
-    title: "Progress Dashboard | PW THRO",
+    title: "Progress Dashboard | PWX",
     description: "Track your lecture and DPP completion across all enrolled batches.",
     canonical: "/dashboard",
   });
